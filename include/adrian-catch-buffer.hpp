@@ -511,16 +511,6 @@ auto reconfigure(ez::nort_t thread, model&& m, catch_buffer_id id, ads::channel_
 	std::tie(m, cbuf.chain) = make_chain(thread, std::move(m), chc, frc * 2, cbuf.chain_options, chain.client_data);
 	m = erase(std::move(m), chain.id);
 	m.catch_buffers = m.catch_buffers.insert(cbuf);
-	// const auto wrong_number_of_channels = chain.channel_count != chc;
-	// const auto not_big_enough           = get_actual_frame_count(chain) < (frc * 2);
-	// const auto requires_new_chain       = wrong_number_of_channels || not_big_enough;
-	// if (requires_new_chain) {
-	// 	std::tie(m, cbuf.chain) = make_chain(thread, std::move(m), chc, frc * 2, cbuf.chain_options, chain.client_data);
-	// 	m.catch_buffers = m.catch_buffers.insert(cbuf);
-	// }
-	// else {
-	// 	m = resize(std::move(m), chain.id, frc * 2);
-	// }
 	cbuf.service->critical.playback_marker.store(0, std::memory_order_relaxed);
 	cbuf.service->critical.write_marker.store(0, std::memory_order_relaxed);
 	return m;
