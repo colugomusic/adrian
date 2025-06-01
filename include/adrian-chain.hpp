@@ -2,7 +2,7 @@
 
 #include "adrian-buffer.hpp"
 #include "adrian-concepts.hpp"
-#include "flags.h"
+#include "adrian-flags.hpp"
 #pragma warning(push, 0)
 #include <immer/algorithm.hpp>
 #pragma warning(pop)

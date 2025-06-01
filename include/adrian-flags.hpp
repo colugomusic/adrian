@@ -2,6 +2,8 @@
 
 #include "adrian-vocab.hpp"
 
+namespace adrian {
+
 [[nodiscard]] inline constexpr auto is_flag_set(int mask, int flag) -> bool { return bool(mask & flag); } 
 [[nodiscard]] inline constexpr auto set_flag(int mask, int flag) -> int { return (mask |= flag); }
 [[nodiscard]] inline constexpr auto unset_flag(int mask, int flag) -> int { return (mask &= ~(flag)); }
@@ -42,3 +44,5 @@ template <typename Mask> [[nodiscard]] constexpr
 auto flag_diff(Mask a, Mask b, typename Mask::e flag) -> voc::old_and_new<bool> {
 	return {is_flag_set(a, flag), is_flag_set(b, flag)};
 }
+
+} // adrian
