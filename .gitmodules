@@ -1,0 +1,12 @@
+[submodule "extern/submodules/ads"]
+	path = extern/submodules/ads
+	url = git@github.com:colugomusic/ads.git
+[submodule "extern/submodules/ez"]
+	path = extern/submodules/ez
+	url = git@github.com:colugomusic/ez.git
+[submodule "extern/submodules/immer"]
+	path = extern/submodules/immer
+	url = git@github.com:arximboldi/immer.git
+[submodule "extern/submodules/madronalib"]
+	path = extern/submodules/madronalib
+	url = git@github.com:madronalabs/madronalib.git

@@ -1,0 +1,16 @@
+{
+	"version": 8,
+	"configurePresets": [
+		{
+			"name": "Visual Studio",
+			"displayName": "Visual Studio",
+			"description": "Visual Studio",
+			"generator": "Visual Studio 17 2022",
+			"binaryDir": "z:/dv/_bld/adrian",
+			"cacheVariables": {
+				"ADRIAN_BUILD_TESTS": "ON",
+				"CMAKE_BUILD_TYPE": "Debug"
+			}
+		}
+	]
+}

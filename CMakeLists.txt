@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(adrian)
+option(ADRIAN_BUILD_TESTS "Build Adrian tests" OFF)
 add_library(adrian INTERFACE)
 add_library(adrian::adrian ALIAS adrian)
 target_sources(adrian INTERFACE
@@ -20,3 +21,6 @@ target_sources(adrian INTERFACE
 		include/adrian-ui-events.hpp
 )
 target_compile_features(adrian INTERFACE cxx_std_20)
+if (ADRIAN_BUILD_TESTS)
+	add_subdirectory(test)
+endif()
