@@ -62,9 +62,9 @@ struct ui {
 };
 
 struct model {
-	audio audio;
-	critical critical;
-	ui ui;
+	service::audio audio;
+	service::critical critical;
+	service::ui ui;
 };
 
 using ptr = std::shared_ptr<model>;
