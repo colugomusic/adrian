@@ -396,7 +396,7 @@ auto scary_read_one_valid_sub_buffer_region(const model& m, const chain::model& 
 	return critical.storage.read(ch, local_start, frame_count, read);
 }
 
-template <typename ReadFn> [[nodiscard]]
+template <typename ReadFn>
 auto scary_read_random(const model& m, const chain::model& chain, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
 	if (!chain.buffers) {
 		return;
@@ -533,12 +533,12 @@ auto scary_write(const model& m, const chain::model& chain, ads::frame_idx start
 	return frame_count;
 }
 
-template <typename ReadFn> [[nodiscard]]
+template <typename ReadFn>
 auto scary_read_one_valid_sub_buffer_region(const model& m, chain_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> void {
 	return scary_read_one_valid_sub_buffer_region(m, m.chains.at(id), ch, start, frame_count, read_fn);
 }
 
-template <typename ReadFn> [[nodiscard]]
+template <typename ReadFn>
 auto scary_read_random(const model& m, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
 	return scary_read_random(m, m.chains.at(id), frames, read_fn);
 }
