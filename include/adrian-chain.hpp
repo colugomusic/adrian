@@ -401,9 +401,14 @@ auto scary_read_random(const model& m, const chain::model& chain, const std::arr
 	if (!chain.buffers) {
 		return;
 	}
+	const auto frame_count = get_actual_frame_count(chain);
 	for (auto ch = ads::channel_idx{}; ch < chain.channel_count; ch++) {
 		ads::frame_idx frame_counter;
 		for (auto fr : frames) {
+			if (fr < 0 || fr >= frame_count) {
+				read_fn(0.0f, ch, frame_counter++);
+				continue;
+			}
 			const auto local_frame     = fr % BUFFER_SIZE;
 			const auto& buffer_service = get_buffer_service(m, chain, fr);
 			const auto& critical       = buffer_service->critical;
@@ -473,9 +478,14 @@ auto scary_write_random(const model& m, const chain::model& chain, const std::ar
 	if (!chain.buffers) {
 		return;
 	}
+	const auto frame_count = get_actual_frame_count(chain);
 	for (auto ch = ads::channel_idx{}; ch < chain.channel_count; ch++) {
 		auto frame_counter = ads::frame_idx{0};
 		for (auto fr : frames) {
+			if (fr < 0 || fr >= frame_count) {
+				frame_counter++;
+				continue;
+			}
 			const auto local_frame     = fr % BUFFER_SIZE;
 			const auto buffer          = get_index_of_sub_buffer(chain, fr);
 			const auto& buffer_service = get_buffer_service(m, chain, buffer);

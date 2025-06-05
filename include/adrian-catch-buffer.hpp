@@ -73,9 +73,10 @@ auto record(ez::audio_t thread, service::model* service, const model& m, const c
 	const auto record_active = critical.record_active.load(std::memory_order_relaxed);
 	if (record_gate) {
 		const auto write_marker = critical.write_marker.load(std::memory_order_relaxed);
-		detail::scary_write_one_valid_sub_buffer_region(thread, service, chain.id, {write_marker}, {kFloatsPerDSPVector}, write_fn);
+		const auto write_marker_frame = ads::frame_idx{static_cast<int64_t>(write_marker)};
+		detail::scary_write_one_valid_sub_buffer_region(thread, service, chain.id, write_marker_frame, {kFloatsPerDSPVector}, write_fn);
 		if (!record_active) {
-			audio.record_start = ads::frame_idx{write_marker};
+			audio.record_start = write_marker_frame;
 			msg::to_ui::send(&service->critical.msgs_to_ui, msg::to_ui::catch_buffer::recording_started{cbuf.id, audio.record_start});
 			critical.record_active.store(true, std::memory_order_relaxed);
 		}
@@ -83,9 +84,10 @@ auto record(ez::audio_t thread, service::model* service, const model& m, const c
 	}
 	else {
 		if (record_active) {
-			const auto write_marker = critical.write_marker.load(std::memory_order_relaxed);
-			const auto beg          = audio.record_start;
-			const auto end          = ads::frame_idx{write_marker};
+			const auto write_marker       = critical.write_marker.load(std::memory_order_relaxed);
+			const auto write_marker_frame = ads::frame_idx{static_cast<int64_t>(write_marker)};
+			const auto beg                = audio.record_start;
+			const auto end                = write_marker_frame;
 			msg::to_ui::send(&service->critical.msgs_to_ui, msg::to_ui::catch_buffer::recording_finished{cbuf.id, {beg, end}});
 			critical.record_active.store(false, std::memory_order_relaxed);
 		}
@@ -143,8 +145,8 @@ auto playback(ez::audio_t thread, service::model* service, const model& m, const
 	auto& critical             = cbuf.service->critical;
 	if (!audio.playback_active) { return {}; }
 	auto read_marker = critical.playback_marker.load(std::memory_order_relaxed);
-	if (chain.channel_count.value == 1) { out = playback_mono(thread, m, chain, {read_marker}); }
-	else                                { out = playback_stereo(thread, m, chain, {read_marker}); }
+	if (chain.channel_count.value == 1) { out = playback_mono  (thread, m, chain, {static_cast<int64_t>(read_marker)}); }
+	else                                { out = playback_stereo(thread, m, chain, {static_cast<int64_t>(read_marker)}); }
 	read_marker = advance_marker(chain.frame_count, read_marker);
 	critical.playback_marker.store(read_marker, std::memory_order_relaxed);
 	if (read_marker >= cbuf.playback_region.end) {
@@ -217,14 +219,14 @@ auto get_frame_count(ez::ui_t thread, service::model* service, catch_buffer_id i
 auto get_playback_marker(const model& m, const catch_buffer::model& cbuf) -> ads::frame_idx {
 	const auto& chain = m.chains.at(cbuf.chain);
 	const auto marker = cbuf.service->critical.playback_marker.load(std::memory_order_relaxed);
-	return {marker % get_partition_size(chain.frame_count).value};
+	return {static_cast<int64_t>(marker % get_partition_size(chain.frame_count).value)};
 }
 
 [[nodiscard]] inline
 auto get_write_marker(const model& m, const catch_buffer::model& cbuf) -> ads::frame_idx {
 	const auto& chain = m.chains.at(cbuf.chain);
 	const auto marker = cbuf.service->critical.write_marker.load(std::memory_order_relaxed);
-	return {marker % get_partition_size(chain.frame_count).value};
+	return {static_cast<int64_t>(marker % get_partition_size(chain.frame_count).value)};
 }
 
 [[nodiscard]] inline

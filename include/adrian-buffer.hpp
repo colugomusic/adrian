@@ -95,9 +95,9 @@ auto update_mipmap(ez::audio_t, buffer::service::model* service) -> void {
 	}
 	const auto local_start = audio.mipmap_dirty_region.beg;
 	const auto local_end   = audio.mipmap_dirty_region.end;
-	const auto frame_count = ads::frame_count{(local_end - local_start).value};
+	const auto frame_count = ads::frame_count{static_cast<uint64_t>((local_end - local_start).value)};
 	auto write_mipmap = [&storage](uint8_t* buffer, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
-		for (ads::frame_idx i = {0}; i.value < frame_count.value; i.value++) {
+		for (ads::frame_idx i = {0}; i < frame_count; i++) {
 			const auto storage_frame = ads::frame_idx{start.value + i.value};
 			const auto storage_value = storage.at(ch, storage_frame);
 			buffer[i.value] = ads::encode<uint8_t>(storage_value);
@@ -123,7 +123,7 @@ auto update_mipmap(ez::ui_t, buffer::service::model* service) -> bool {
 	const auto beg = critical.mipmap_dirty_region.beg;
 	const auto end = critical.mipmap_dirty_region.end;
 	assert (beg <= end);
-	const auto size = ads::frame_count{(end - beg).value};
+	const auto size = ads::frame_count{static_cast<uint64_t>((end - beg).value)};
 	ui.mipmap.write(beg, size, get_value_from_staging_buffer);
 	ui.mipmap.update(critical.mipmap_dirty_region);
 	critical.mipmap_dirty_region = {};
