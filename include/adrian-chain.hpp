@@ -669,15 +669,15 @@ auto read_mipmap(const model& m, chain_id id, float bin_size, ads::channel_idx c
 	if (fr < 0.0f) { return {}; }
 	const auto& chain = m.chains.at(id);
 	if (!chain.buffers) { return {}; }
-	const auto index_a = static_cast<uint64_t>(std::floor(fr));
-	const auto index_b = static_cast<uint64_t>(std::ceil(fr));
+	const auto index_a = static_cast<int64_t>(std::floor(fr));
+	const auto index_b = static_cast<int64_t>(std::ceil(fr));
 	const auto t       = fr - index_a;
 	auto buffer_index_a = detail::buffer_idx{static_cast<int32_t>(index_a / detail::BUFFER_SIZE)};
 	auto buffer_index_b = detail::buffer_idx{static_cast<int32_t>(index_b / detail::BUFFER_SIZE)};
 	buffer_index_a            = chain.buffers->at(buffer_index_a.value);
 	buffer_index_b            = chain.buffers->at(buffer_index_b.value);
-	const auto local_frame_a  = ads::frame_idx{index_a % detail::BUFFER_SIZE};
-	const auto local_frame_b  = ads::frame_idx{index_b % detail::BUFFER_SIZE};
+	const auto local_frame_a  = ads::frame_idx{index_a % static_cast<int64_t>(detail::BUFFER_SIZE)};
+	const auto local_frame_b  = ads::frame_idx{index_b % static_cast<int64_t>(detail::BUFFER_SIZE)};
 	auto service_a = detail::get_buffer_service(m, chain, buffer_index_a);
 	auto service_b = detail::get_buffer_service(m, chain, buffer_index_b);
 	auto& ui_a = service_a->ui;
