@@ -80,7 +80,7 @@ struct info {
 };
 
 struct table {
-	immer::vector<info> info;
+	immer::vector<buffer::info> info;
 	immer::vector<service::ptr> service;
 };
 
