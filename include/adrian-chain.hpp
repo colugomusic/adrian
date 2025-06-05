@@ -459,7 +459,7 @@ auto scary_write_one_valid_sub_buffer_region(const model& m, const chain::model&
 		return {0};
 	}
 	assert (is_valid_sub_buffer_region(chain, start, frame_count));
-	const auto local_start      = ads::frame_idx{start.value % BUFFER_SIZE};
+	const auto local_start      = start % BUFFER_SIZE;
 	const auto local_end        = local_start + frame_count;
 	const auto& buffer_service  = get_buffer_service(m, chain, start);
 	auto& critical              = buffer_service->critical;

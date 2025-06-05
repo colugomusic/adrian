@@ -399,7 +399,7 @@ auto read(ez::nort_t thread, service::model* service, catch_buffer_id id, ads::f
 	return read(service->model.read(thread), id, start, frame_count, read_fn);
 }
 
-[[nodiscard]] inline
+inline
 auto set_mipmaps_enabled(ez::nort_t thread, service::model* service, catch_buffer_id id, bool enabled) -> void {
 	service->model.update_publish(thread, [id, enabled](detail::model x){
 		const auto& cbuf = x.catch_buffers.at(id);
