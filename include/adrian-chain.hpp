@@ -304,8 +304,8 @@ struct chunk {
 	std::array<float, CHUNK_SIZE.v> frames;
 	float* write_pos      = frames.data();
 	const float* read_pos = frames.data();
-	ads::frame_count frames_written = 0;
-	ads::frame_count frames_read    = 0;
+	ads::frame_count frames_written;
+	ads::frame_count frames_read;
 	chunk() { frames.fill(0.0f); }
 	auto advance_write(ads::frame_count count) {
 		frames_written += count;
