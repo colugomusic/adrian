@@ -7,9 +7,11 @@
 #include <ads-mipmap.hpp>
 #include <ads.hpp>
 #include <any>
+#include <condition_variable>
 #include <ez-extra.hpp>
 #include <ez.hpp>
 #include <jthread.hpp>
+#include <mutex>
 #pragma warning(push, 0)
 #include <immer/map.hpp>
 #include <immer/table.hpp>
