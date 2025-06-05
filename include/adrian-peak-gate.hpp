@@ -15,7 +15,7 @@ struct model {
 	std::vector<channel> channels;
 };
 
-[[nodiscard]] inline
+inline
 auto init(model* m, ads::channel_count channel_count, float glide_time_in_samples) -> void {
 	m->channels.resize(channel_count.value);
 	for (auto& c : m->channels) {
