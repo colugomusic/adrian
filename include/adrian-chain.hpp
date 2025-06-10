@@ -24,7 +24,7 @@
 //---------------------------------------------------------------------------------------------------------
 namespace adrian::detail::chain::fn {
 
-[[nodiscard]]
+[[nodiscard]] inline
 auto finish_loading(immer::vector<buffer_idx> buffers) {
 	return [buffers](chain::model x){
 		x.buffers       = buffers;
@@ -34,7 +34,7 @@ auto finish_loading(immer::vector<buffer_idx> buffers) {
 	};
 }
 
-[[nodiscard]]
+[[nodiscard]] inline
 auto set_load_progress(float v) {
 	return [v](chain::model x){
 		x.load_progress = v;
@@ -46,7 +46,7 @@ auto set_load_progress(float v) {
 
 namespace adrian::detail {
 
-[[nodiscard]]
+[[nodiscard]] inline
 auto update_chain(model x, chain_id id, auto fn) -> model {
 	x.chains = std::move(x.chains).update(id, [fn](detail::chain::model x){
 		return fn(std::move(x));
