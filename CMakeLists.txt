@@ -27,7 +27,7 @@ target_sources(adrian INTERFACE
 		extern/jthread
 		extern/submodules/madronalib/source
 		extern/submodules/madronalib/source/app
-		$<$<PLATFORM_ID:Darwin>:extern/submodules/madronalib/external/sse2neon>
+		$<$<PLATFORM_ID:Darwin>:${CMAKE_CURRENT_LIST_DIR}/extern/submodules/madronalib/external/sse2neon>
 	FILES
 		include/adrian.hpp
 		include/adrian-allocation-thread.hpp
