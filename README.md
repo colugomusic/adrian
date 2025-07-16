@@ -1,6 +1,6 @@
 # adrian
 
-## adrian:chain
+## adrian::chain
 `#include <adrian-chain.hpp`
 
 This is a buffer that can be used for reading/writing audio data. I use this to implement Blockhead's send/receive buffers and the catch buffer (below.)
