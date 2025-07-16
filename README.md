@@ -14,4 +14,4 @@ This is a buffer that can be used for reading/writing audio data. I use this to 
 ## adrian::catch_buffer
 `#include <adrian-catch-buffer.hpp`
 
-This is the backend which powers Blockhead's audio input system.
+This is the circular buffer which powers Blockhead's audio input system. You can simultaneously play back part of the buffer while writing to it in the audio thread and also read from it in another (non-realtime) background thread (e.g. to grab parts of the buffer and generate samples from it) without causing any interruption to the playback or recording. All the horrible nightmare of doing this in a realtime-safe manner is encapsulated by this class.
