@@ -24,11 +24,14 @@ target_sources(adrian INTERFACE
 		include/adrian-catch-buffer.hpp
 		include/adrian-chain.hpp
 		include/adrian-concepts.hpp
+		include/adrian-flags.hpp
 		include/adrian-ids.hpp
 		include/adrian-messages.hpp
 		include/adrian-model.hpp
 		include/adrian-peak-gate.hpp
+		include/adrian-pp.hpp
 		include/adrian-ui-events.hpp
+		include/adrian-vocab.hpp
 )
 target_compile_features(adrian INTERFACE cxx_std_20)
 target_link_libraries(adrian INTERFACE
