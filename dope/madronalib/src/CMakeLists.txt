@@ -9,6 +9,7 @@ target_sources(madronalib PUBLIC
 		${CMAKE_CURRENT_SOURCE_DIR}/source
 	FILES
 		${CMAKE_CURRENT_SOURCE_DIR}/external/sse2neon/sse2neon.h
+		${CMAKE_CURRENT_SOURCE_DIR}/source/app/MLPlatform.h
 		${CMAKE_CURRENT_SOURCE_DIR}/source/DSP/MLDSPBuffer.h
 		${CMAKE_CURRENT_SOURCE_DIR}/source/DSP/MLDSPFilters.h
 		${CMAKE_CURRENT_SOURCE_DIR}/source/DSP/MLDSPFunctional.h
@@ -25,7 +26,11 @@ target_sources(madronalib PUBLIC
 		${CMAKE_CURRENT_SOURCE_DIR}/source/DSP/MLDSPScale.h
 		${CMAKE_CURRENT_SOURCE_DIR}/source/DSP/MLDSPUtils.h
 )
-target_include_directories(madronalib INTERFACE $<INSTALL_INTERFACE:include/madronalib/DSP>)
+target_include_directories(madronalib INTERFACE
+	$<INSTALL_INTERFACE:include/madronalib>
+	$<INSTALL_INTERFACE:include/madronalib/app>
+	$<INSTALL_INTERFACE:include/madronalib/DSP>
+)
 install(
 	TARGETS madronalib
 	EXPORT madronalib
