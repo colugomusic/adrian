@@ -5,18 +5,11 @@ set(immer_BUILD_TESTS    OFF CACHE BOOL "immer: Build tests")
 set(immer_BUILD_EXAMPLES OFF CACHE BOOL "immer: Build examples")
 set(immer_BUILD_DOCS     OFF CACHE BOOL "immer: Build docs")
 set(immer_BUILD_EXTRAS   OFF CACHE BOOL "immer: Build extras")
-if (NOT TARGET ads::ads)
-	add_subdirectory(extern/submodules/ads)
-endif()
-if (NOT TARGET ez::ez)
-	add_subdirectory(extern/submodules/ez)
-endif()
-if (NOT TARGET immer)
-	add_subdirectory(extern/submodules/immer)
-endif()
-if (NOT TARGET readerwriterqueue)
-	add_subdirectory(extern/submodules/readerwriterqueue)
-endif()
+find_package(ads REQUIRED CONFIG)
+find_package(ez REQUIRED CONFIG)
+find_package(immer REQUIRED CONFIG)
+find_package(madronalib REQUIRED CONFIG)
+find_package(readerwriterqueue REQUIRED CONFIG)
 add_library(adrian INTERFACE)
 add_library(adrian::adrian ALIAS adrian)
 target_sources(adrian INTERFACE
@@ -25,9 +18,6 @@ target_sources(adrian INTERFACE
 	BASE_DIRS
 		include
 		extern/jthread
-		extern/submodules/madronalib/source
-		extern/submodules/madronalib/source/app
-		$<$<PLATFORM_ID:Darwin>:${CMAKE_CURRENT_LIST_DIR}/extern/submodules/madronalib/external/sse2neon>
 	FILES
 		include/adrian.hpp
 		include/adrian-allocation-thread.hpp
@@ -46,8 +36,18 @@ target_link_libraries(adrian INTERFACE
 	ads::ads
 	ez::ez
 	immer
-	readerwriterqueue
+	madronalib::madronalib
+	readerwriterqueue::readerwriterqueue
 )
 if (ADRIAN_BUILD_TESTS)
 	add_subdirectory(test)
 endif()
+include(CMakePackageConfigHelpers)
+install(TARGETS adrian EXPORT adrianTargets FILE_SET HEADERS)
+install(EXPORT adrianTargets FILE adrianTargets.cmake NAMESPACE adrian:: DESTINATION lib/cmake/adrian)
+configure_package_config_file(
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/adrianConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/adrianConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/adrian
+)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/adrianConfig.cmake" DESTINATION lib/cmake/adrian)
