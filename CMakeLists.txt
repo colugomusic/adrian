@@ -13,8 +13,7 @@ find_package(readerwriterqueue REQUIRED CONFIG)
 add_library(adrian INTERFACE)
 add_library(adrian::adrian ALIAS adrian)
 target_sources(adrian INTERFACE
-	FILE_SET adrian
-	TYPE HEADERS
+	FILE_SET HEADERS
 	BASE_DIRS
 		include
 		extern/jthread
