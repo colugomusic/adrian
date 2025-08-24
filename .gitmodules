@@ -1,0 +1,3 @@
+[submodule "dope/madronalib"]
+	path = dope/madronalib
+	url = git@github.com:colugomusic/dope-madronalib.git
