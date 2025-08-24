@@ -28,6 +28,7 @@ target_sources(adrian INTERFACE
 		include/adrian-messages.hpp
 		include/adrian-model.hpp
 		include/adrian-peak-gate.hpp
+		include/adrian-pp.hpp
 		include/adrian-ui-events.hpp
 )
 target_compile_features(adrian INTERFACE cxx_std_20)
