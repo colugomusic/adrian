@@ -16,7 +16,6 @@ target_sources(adrian INTERFACE
 	FILE_SET HEADERS
 	BASE_DIRS
 		include
-		extern/jthread
 	FILES
 		include/adrian.hpp
 		include/adrian-allocation-thread.hpp
@@ -32,6 +31,16 @@ target_sources(adrian INTERFACE
 		include/adrian-pp.hpp
 		include/adrian-ui-events.hpp
 		include/adrian-vocab.hpp
+)
+target_sources(adrian INTERFACE
+	FILE_SET HEADERS
+	BASE_DIRS
+		${CMAKE_CURRENT_LIST_DIR}/extern/jthread
+	FILES
+		${CMAKE_CURRENT_LIST_DIR}/extern/jthread/jthread.hpp
+		${CMAKE_CURRENT_LIST_DIR}/extern/jthread/jthread-impl.hpp
+		${CMAKE_CURRENT_LIST_DIR}/extern/jthread/jthread-impl-stop-token.hpp
+		${CMAKE_CURRENT_LIST_DIR}/extern/jthread/jthread-legal.txt
 )
 target_compile_features(adrian INTERFACE cxx_std_20)
 target_link_libraries(adrian INTERFACE
