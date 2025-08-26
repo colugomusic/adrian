@@ -6,7 +6,7 @@
   git:                 https://github.com/colugomusic/ez.git
   build-type:          cmake
 
-- name:                immer
+- name:                Immer
   git:                 https://github.com/arximboldi/immer.git
   tag:                 v0.8.1
   build-type:          cmake

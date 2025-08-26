@@ -3,7 +3,7 @@
 include(CMakeFindDependencyMacro)
 find_dependency(ads)
 find_dependency(ez)
-find_dependency(immer)
+find_dependency(Immer)
 find_dependency(madronalib)
 find_dependency(readerwriterqueue)
 
