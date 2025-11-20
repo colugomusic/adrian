@@ -36,7 +36,7 @@ static constexpr uint64_t BUFFER_SIZE = 1 << 14;
 
 static_assert (is_power_of_two(BUFFER_SIZE));
 
-struct buffer_idx { DEFAULT_EQUALITY(buffer_idx); int32_t value = -1; explicit operator bool() const { return value >= 0; } };
+struct buffer_idx { ADRIAN_DEFAULT_EQUALITY(buffer_idx); int32_t value = -1; explicit operator bool() const { return value >= 0; } };
 
 // thread annotations --------------------------------------------------------------
 namespace th {
@@ -90,7 +90,7 @@ struct table {
 namespace chain {
 
 struct flags {
-	DEFAULT_EQUALITY(flags);
+	ADRIAN_DEFAULT_EQUALITY(flags);
 	enum e {
 		loading          = 1 << 1,
 		generate_mipmaps = 1 << 2,
@@ -122,7 +122,7 @@ auto operator==(const model& a, const model& b) -> bool {
 
 // loading_chain -------------------------------------------------------------------
 struct loading_chain {
-	DEFAULT_EQUALITY(loading_chain);
+	ADRIAN_DEFAULT_EQUALITY(loading_chain);
 	size_t idx;
 	chain_id user;
 	ads::channel_count channel_count;

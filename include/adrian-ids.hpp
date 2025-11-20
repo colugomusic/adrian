@@ -5,8 +5,8 @@
 
 namespace adrian {
 
-struct catch_buffer_id { DEFAULT_EQUALITY(catch_buffer_id); int32_t value = -1; explicit operator bool() const { return value >= 0; } };
-struct chain_id        { DEFAULT_EQUALITY(chain_id);        int32_t value = -1; explicit operator bool() const { return value >= 0; } };
+struct catch_buffer_id { ADRIAN_DEFAULT_EQUALITY(catch_buffer_id); int32_t value = -1; explicit operator bool() const { return value >= 0; } };
+struct chain_id        { ADRIAN_DEFAULT_EQUALITY(chain_id);        int32_t value = -1; explicit operator bool() const { return value >= 0; } };
 
 } // adrian
 
