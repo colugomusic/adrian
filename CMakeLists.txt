@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(adrian)
-set(ADRIAN_BUILD_TESTS   OFF CACHE BOOL "Build Adrian tests")
+enable_testing()
 set(immer_BUILD_TESTS    OFF CACHE BOOL "immer: Build tests")
 set(immer_BUILD_EXAMPLES OFF CACHE BOOL "immer: Build examples")
 set(immer_BUILD_DOCS     OFF CACHE BOOL "immer: Build docs")
@@ -50,7 +50,7 @@ target_link_libraries(adrian INTERFACE
 	madronalib::madronalib
 	readerwriterqueue::readerwriterqueue
 )
-if (ADRIAN_BUILD_TESTS)
+if (BUILD_TESTING)
 	add_subdirectory(test)
 endif()
 include(CMakePackageConfigHelpers)

@@ -1,2 +1,4 @@
 /.vscode
 CMakePresets.json
+neovim.json
+.clangd

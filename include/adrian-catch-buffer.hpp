@@ -99,8 +99,26 @@ auto is_aligned(ads::frame_idx start, ads::frame_count frame_count) -> bool {
 	return start % kFloatsPerDSPVector == 0 && frame_count == kFloatsPerDSPVector;
 }
 
+[[nodiscard]]
+auto get_partitioned_read_frame(ads::frame_count frame_count, uint64_t write_marker, auto read_frame) -> decltype(read_frame) {
+    const auto partition_size = get_partition_size(frame_count).value;
+	// The part of the chain that is being written to
+	const auto write_part = write_marker >= partition_size;
+	// The part of the chain that is not being written to
+	const auto other_part = !write_part;
+	// We read from the other part if to the left of the write marker, otherwise read from the write part
+	const auto read_part  = read_frame < (write_marker % partition_size) ? write_part : other_part;
+	return read_frame + (partition_size * read_part);
+}
+
+[[nodiscard]]
+auto get_partitioned_read_frame(const catch_buffer::model& cbuf, ads::frame_count frame_count, auto read_frame) -> decltype(read_frame) {
+	const auto write_marker = cbuf.service->critical.write_marker.load(std::memory_order_acquire);
+	return get_partitioned_read_frame(frame_count, write_marker, read_frame);
+}
+
 [[nodiscard]] inline
-auto playback_one_channel(ez::audio_t, const model& m, const chain::model& chain, ads::channel_idx ch, ads::frame_idx read_marker) -> ml::DSPVector {
+auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::channel_idx ch, ads::frame_idx read_marker) -> ml::DSPVector {
 	ml::DSPVector out;
 	auto input = [&](float* chunk, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
 		auto transfer = [&](const float* buffer, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
@@ -114,26 +132,29 @@ auto playback_one_channel(ez::audio_t, const model& m, const chain::model& chain
 		ml::loadAligned(out, chunk);
 		return frame_count;
 	};
+	auto input_start_xform = [&](ads::frame_idx fr) -> ads::frame_idx {
+		return get_partitioned_read_frame(cbuf, chain.frame_count, fr);
+	};
 	static constexpr auto input_region_alignment  = processor::input_region_alignment{BUFFER_SIZE};
 	static constexpr auto output_region_alignment = processor::OUTPUT_REGION_ALIGNMENT_IGNORE;
 	static constexpr auto chunk_size              = processor::chunk_size{kFloatsPerDSPVector};
 	static constexpr auto fixed_chunk_size        = processor::fixed_chunk_size::on;
-	const auto frames_processed = detail::processor::process<input_region_alignment, output_region_alignment, chunk_size, fixed_chunk_size>(read_marker, read_marker, {kFloatsPerDSPVector}, input, output);
+	const auto frames_processed = detail::processor::process<input_region_alignment, output_region_alignment, chunk_size, fixed_chunk_size>(read_marker, read_marker, {kFloatsPerDSPVector}, input, output, input_start_xform);
 	assert (frames_processed.value == kFloatsPerDSPVector);
 	return out;
 }
 
 [[nodiscard]] inline
-auto playback_mono(ez::audio_t thread, const model& m, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
-	return ml::repeatRows<2>(playback_one_channel(thread, m, chain, ads::channel_idx{0}, read_marker));
+auto playback_mono(ez::audio_t thread, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
+	return ml::repeatRows<2>(playback_one_channel(thread, m, cbuf, chain, ads::channel_idx{0}, read_marker));
 }
 
 [[nodiscard]] inline
-auto playback_stereo(ez::audio_t thread, const model& m, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
+auto playback_stereo(ez::audio_t thread, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
 	ml::DSPVectorArray<2> out;
 	for (auto ch = ads::channel_idx{0}; ch < chain.channel_count; ++ch) {
 		auto& row = out.row(static_cast<int>(ch.value));
-		row = playback_one_channel(thread, m, chain, ch, read_marker);
+		row = playback_one_channel(thread, m, cbuf, chain, ch, read_marker);
 	}
 	return out;
 }
@@ -145,8 +166,8 @@ auto playback(ez::audio_t thread, service::model* service, const model& m, const
 	auto& critical             = cbuf.service->critical;
 	if (!audio.playback_active) { return {}; }
 	auto read_marker = critical.playback_marker.load(std::memory_order_relaxed);
-	if (chain.channel_count.value == 1) { out = playback_mono  (thread, m, chain, {static_cast<int64_t>(read_marker)}); }
-	else                                { out = playback_stereo(thread, m, chain, {static_cast<int64_t>(read_marker)}); }
+	if (chain.channel_count.value == 1) { out = playback_mono  (thread, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
+	else                                { out = playback_stereo(thread, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
 	read_marker = advance_marker(chain.frame_count, read_marker);
 	critical.playback_marker.store(read_marker, std::memory_order_relaxed);
 	if (read_marker >= cbuf.playback_region.end) {
@@ -157,10 +178,10 @@ auto playback(ez::audio_t thread, service::model* service, const model& m, const
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVector& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
+auto process(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
 	auto& audio            = cbuf.service->audio;
 	const auto& chain      = m.chains.at(cbuf.chain);
-	const auto record_gate = peak_gate::process(&audio.peak_gate, in, threshold);
+	const auto record_gate = disable_recording ? false : peak_gate::process(&audio.peak_gate, in, threshold);
 	auto write_fn = [in, gain](float* buffer, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
 		assert (frame_count.value == kFloatsPerDSPVector);
 		ml::storeAligned(in * gain, buffer);
@@ -171,10 +192,10 @@ auto process(ez::audio_t thread, service::model* service, const model& m, const 
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVectorArray<2>& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
+auto process(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
 	auto& audio            = cbuf.service->audio;
 	const auto& chain      = m.chains.at(cbuf.chain);
-	const auto record_gate = peak_gate::process(&audio.peak_gate, in, threshold);
+	const auto record_gate = disable_recording ? false : peak_gate::process(&audio.peak_gate, in, threshold);
 	auto write_fn = [in, gain](float* buffer, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
 		assert (frame_count.value == kFloatsPerDSPVector);
 		assert (ch.value < 2);
@@ -277,24 +298,6 @@ auto is_record_active(ez::ui_t thread, service::model* service, catch_buffer_id 
 [[nodiscard]] inline
 auto is_playback_active(ez::ui_t thread, service::model* service, catch_buffer_id id) -> bool {
 	return detail::is_playback_active(thread, service->model.read(thread), id);
-}
-
-[[nodiscard]]
-auto get_partitioned_read_frame(ads::frame_count frame_count, uint64_t write_marker, auto read_frame) -> decltype(read_frame) {
-    const auto partition_size = get_partition_size(frame_count).value;
-	// The part of the chain that is being written to
-	const auto write_part = write_marker >= partition_size;
-	// The part of the chain that is not being written to
-	const auto other_part = !write_part;
-	// We read from the other part if to the left of the write marker, otherwise read from the write part
-	const auto read_part  = read_frame < (write_marker % partition_size) ? write_part : other_part;
-	return read_frame + (partition_size * read_part);
-}
-
-[[nodiscard]]
-auto get_partitioned_read_frame(const catch_buffer::model& cbuf, ads::frame_count frame_count, auto read_frame) -> decltype(read_frame) {
-	const auto write_marker = cbuf.service->critical.write_marker.load(std::memory_order_acquire);
-	return get_partitioned_read_frame(frame_count, write_marker, read_frame);
 }
 
 [[nodiscard]] inline
@@ -465,23 +468,23 @@ auto playback_stop(ez::ui_t thread, service::model* service, catch_buffer_id id)
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, m, m.catch_buffers.at(id), in, threshold, gain);
+auto process(ez::audio_t thread, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(thread, service, m, m.catch_buffers.at(id), in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, m, m.catch_buffers.at(id), in, threshold, gain);
+auto process(ez::audio_t thread, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(thread, service, m, m.catch_buffers.at(id), in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, *service->model.read(thread), id, in, threshold, gain);
+auto process(ez::audio_t thread, service::model* service, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(thread, service, *service->model.read(thread), id, in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, *service->model.read(thread), id, in, threshold, gain);
+auto process(ez::audio_t thread, service::model* service, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(thread, service, *service->model.read(thread), id, in, threshold, gain, disable_recording);
 }
 
 template <uint64_t DestChs, uint64_t DestFrs> inline
@@ -585,13 +588,13 @@ auto playback_stop(ez::ui_t thread, catch_buffer_id id) -> void {
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, &detail::service_, id, in, threshold, gain);
+auto process(ez::audio_t thread, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording = false) -> ml::DSPVectorArray<2> {
+	return detail::process(thread, &detail::service_, id, in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, &detail::service_, id, in, threshold, gain);
+auto process(ez::audio_t thread, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording = false) -> ml::DSPVectorArray<2> {
+	return detail::process(thread, &detail::service_, id, in, threshold, gain, disable_recording);
 }
 
 template <typename ReadFn>
