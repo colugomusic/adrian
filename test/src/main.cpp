@@ -2,7 +2,7 @@
 #include "adrian.hpp"
 #include "doctest.h"
 
-TEST_CASE("test test") {
+TEST_CASE("basic catch buffer wraparound sanity") {
 	auto options = adrian::chain_options{};
 	options.allocate_now   = true;
 	options.enable_mipmaps = false;
@@ -46,4 +46,30 @@ TEST_CASE("test test") {
 	adrian::update(ez::audio);
 	output4 = adrian::process(ez::audio, cbuf.id(), input4, 0.0f, 1.0f, true);
 	REQUIRE (output4.constRow(0) == input2);
+}
+
+TEST_CASE("catch buffer copy") {
+	auto options = adrian::chain_options{};
+	options.allocate_now   = true;
+	options.enable_mipmaps = false;
+	options.silent         = false;
+	auto cbuf = adrian::catch_buffer{{1}, {64}, options, {}};
+	auto input0 = ml::DSPVector{};
+	auto input1 = ml::DSPVector{};
+	std::fill(input0.getBuffer() + 0 , input0.getBuffer() + 32, 1.0f);
+	std::fill(input0.getBuffer() + 32, input0.getBuffer() + 64, 2.0f);
+	std::fill(input1.getBuffer() + 0 , input1.getBuffer() + 32, 3.0f);
+	std::fill(input1.getBuffer() + 32, input1.getBuffer() + 64, 4.0f);
+	auto output0 = ml::DSPVectorArray<2>{};
+	auto output1 = ml::DSPVectorArray<2>{};
+	output0 = adrian::process(ez::audio, cbuf.id(), input0, 0.0f, 1.0f);
+	output1 = adrian::process(ez::audio, cbuf.id(), input1, 0.0f, 1.0f);
+	auto dest_buf = ads::data<float, 1, 64>{};
+	auto result   = cbuf.copy(ez::ui, {0}, &dest_buf, {0}, {64});
+	REQUIRE (result == 64);
+	REQUIRE (dest_buf.at(ads::frame_idx{0})  == 3.0f);
+	REQUIRE (dest_buf.at(ads::frame_idx{16}) == 3.0f);
+	REQUIRE (dest_buf.at(ads::frame_idx{31}) == 3.0f);
+	REQUIRE (dest_buf.at(ads::frame_idx{32}) == 4.0f);
+	REQUIRE (dest_buf.at(ads::frame_idx{63}) == 4.0f);
 }
