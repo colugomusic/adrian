@@ -665,8 +665,8 @@ auto set_mipmaps_enabled(ez::nort_t thread, service::model* service, chain_id id
 }
 
 [[nodiscard]] inline
-auto read_mipmap(const model& m, chain_id id, float bin_size, ads::channel_idx ch, float fr) -> ads::mipmap_minmax<uint8_t> {
-	if (fr < 0.0f) { return {}; }
+auto read_mipmap(const model& m, chain_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
+	if (fr < 0.0) { return {}; }
 	const auto& chain = m.chains.at(id);
 	if (!chain.buffers) { return {}; }
 	const auto index_a = static_cast<int64_t>(std::floor(fr));
@@ -737,7 +737,7 @@ auto make_chain(ez::nort_t thread, ads::channel_count channel_count, ads::frame_
 }
 
 [[nodiscard]] inline
-auto read_mipmap(ez::ui_t thread, chain_id id, float bin_size, ads::channel_idx ch, float fr) -> ads::mipmap_minmax<uint8_t> {
+auto read_mipmap(ez::ui_t thread, chain_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
 	return detail::read_mipmap(detail::service_.model.read(thread), id, bin_size, ch, fr);
 }
 
@@ -847,12 +847,12 @@ struct chain {
 	auto clear_mipmap(ez::ui_t thread) -> void {
 		adrian::clear_mipmap(thread, id_);
 	}
-	auto is_ready(ez::ui_t thread) -> bool                                           { return adrian::is_ready(thread, id_); }
-	auto resize(ez::nort_t thread, ads::frame_count frame_count) -> void             { return adrian::resize(thread, id_, frame_count); }
-	auto read_mipmap(ez::ui_t thread, float bin_size, ads::channel_idx ch, float fr) { return adrian::read_mipmap(thread, id_, bin_size, ch, fr); }
-	auto set_mipmaps_enabled(ez::nort_t thread, bool enabled) -> void                { return adrian::set_mipmaps_enabled(thread, id_, enabled); }
-	[[nodiscard]] auto get_frame_count(ez::ui_t thread) const                        { return adrian::get_frame_count(thread, id_); }
-	[[nodiscard]] auto id() const -> chain_id                                        { return id_; }
+	auto is_ready(ez::ui_t thread) -> bool                                             { return adrian::is_ready(thread, id_); }
+	auto resize(ez::nort_t thread, ads::frame_count frame_count) -> void               { return adrian::resize(thread, id_, frame_count); }
+	auto read_mipmap(ez::ui_t thread, double bin_size, ads::channel_idx ch, double fr) { return adrian::read_mipmap(thread, id_, bin_size, ch, fr); }
+	auto set_mipmaps_enabled(ez::nort_t thread, bool enabled) -> void                  { return adrian::set_mipmaps_enabled(thread, id_, enabled); }
+	[[nodiscard]] auto get_frame_count(ez::ui_t thread) const                          { return adrian::get_frame_count(thread, id_); }
+	[[nodiscard]] auto id() const -> chain_id                                          { return id_; }
 	template <typename ReadFn>
 	auto scary_read_random(ez::rt_t thread, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
 		return adrian::scary_read_random(thread, id_, frames, read_fn);
