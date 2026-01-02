@@ -301,7 +301,7 @@ auto is_playback_active(ez::ui_t thread, service::model* service, catch_buffer_i
 }
 
 [[nodiscard]] inline
-auto read_mipmap(const model& m, const catch_buffer::model& cbuf, float bin_size, ads::channel_idx ch, float fr) -> ads::mipmap_minmax<uint8_t> {
+auto read_mipmap(const model& m, const catch_buffer::model& cbuf, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
 	const auto& chain = m.chains.at(cbuf.chain);
 	if (fr < 0)                                      { return {}; }
 	if (fr >= get_partition_size(chain.frame_count)) { return {}; }
@@ -310,12 +310,12 @@ auto read_mipmap(const model& m, const catch_buffer::model& cbuf, float bin_size
 }
 
 [[nodiscard]] inline
-auto read_mipmap(const model& m, catch_buffer_id id, float bin_size, ads::channel_idx ch, float fr) -> ads::mipmap_minmax<uint8_t> {
+auto read_mipmap(const model& m, catch_buffer_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
 	return read_mipmap(m, m.catch_buffers.at(id), bin_size, ch, fr);
 }
 
 [[nodiscard]] inline
-auto read_mipmap(ez::ui_t thread, service::model* service, catch_buffer_id id, float bin_size, ads::channel_idx ch, float fr) -> ads::mipmap_minmax<uint8_t> {
+auto read_mipmap(ez::ui_t thread, service::model* service, catch_buffer_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
 	return read_mipmap(service->model.read(thread), id, bin_size, ch, fr);
 }
 
@@ -610,7 +610,7 @@ template <typename ReadFn>
 }
 
 [[nodiscard]] inline
-auto read_mipmap(ez::ui_t thread, catch_buffer_id id, float bin_size, ads::channel_idx ch, float fr) -> ads::mipmap_minmax<uint8_t> {
+auto read_mipmap(ez::ui_t thread, catch_buffer_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
 	return detail::read_mipmap(thread, &detail::service_, id, bin_size, ch, fr);
 }
 
@@ -660,7 +660,7 @@ struct catch_buffer {
 	[[nodiscard]] auto is_record_active(ez::ui_t thread) const -> bool                { return adrian::is_record_active(thread, id_); }
 	[[nodiscard]] auto is_playback_active(ez::ui_t thread) const -> bool              { return adrian::is_playback_active(thread, id_); }
 	[[nodiscard]]
-	auto read_mipmap(ez::ui_t thread, float bin_size, ads::channel_idx ch, float fr) const -> ads::mipmap_minmax<uint8_t> {
+	auto read_mipmap(ez::ui_t thread, double bin_size, ads::channel_idx ch, double fr) const -> ads::mipmap_minmax<uint8_t> {
 		return adrian::read_mipmap(thread, id_, bin_size, ch, fr);
 	}
 	template <uint64_t DestChs, uint64_t DestFrs>
