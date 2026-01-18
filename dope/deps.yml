@@ -14,6 +14,7 @@
 
 - name:                madronalib
   git:                 https://github.com/madronalabs/madronalib.git
+  tag:                 2ea21d383f7073663fdb5df235d7d692801a1687
   build-type:          cmake
   add-src-files:       true
 
