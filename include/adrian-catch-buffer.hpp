@@ -84,10 +84,11 @@ auto record(ez::audio_t thread, service::model* service, const model& m, const c
 	}
 	else {
 		if (record_active) {
+			const auto partition_size     = get_partition_size(chain);
 			const auto write_marker       = critical.write_marker.load(std::memory_order_relaxed);
 			const auto write_marker_frame = ads::frame_idx{static_cast<int64_t>(write_marker)};
-			const auto beg                = audio.record_start;
-			const auto end                = write_marker_frame;
+			const auto beg                = audio.record_start % partition_size;
+			const auto end                = write_marker_frame % partition_size;
 			msg::to_ui::send(&service->critical.msgs_to_ui, msg::to_ui::catch_buffer::recording_finished{cbuf.id, {beg, end}});
 			critical.record_active.store(false, std::memory_order_relaxed);
 		}
