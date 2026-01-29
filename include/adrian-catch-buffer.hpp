@@ -503,7 +503,7 @@ auto copy(const model& m, const catch_buffer::model& cbuf, ads::frame_idx src_st
 template <uint64_t DestChs, uint64_t DestFrs> inline
 auto copy(const model& m, catch_buffer_id id, ads::frame_idx start, ads::data<float, DestChs, DestFrs>* dest, ads::frame_idx dest_start, ads::frame_count frame_count) -> ads::frame_count {
 	const auto& cbuf          = m.catch_buffers.at(id);
-	const auto& chain         = m.chains.at(cbuf.chain_id);
+	const auto& chain         = m.chains.at(cbuf.chain);
 	const auto partition_size = get_partition_size(chain);
 	return detail::copy(m, cbuf, start % partition_size, dest, dest_start, frame_count);
 }
