@@ -1,25 +1,25 @@
-- name:                ads
-  git:                 https://github.com/colugomusic/ads.git
-  track:               true
-  build-type:          cmake
+- name: ads
+  git: https://github.com/colugomusic/ads.git
+  tag: 5e8067a401e899d8d022d2b0057251870408cc63
+  track: true
+  build-type: cmake
 
-- name:                ez
-  git:                 https://github.com/colugomusic/ez.git
-  track:               true
-  build-type:          cmake
+- name: ez
+  git: https://github.com/colugomusic/ez.git
+  tag: 618115caf70d8782cdc3823fcb8bc1ce42a9c7ad
+  track: true
+  build-type: cmake
 
-- name:                Immer
-  git:                 https://github.com/arximboldi/immer.git
-  tag:                 v0.8.1
-  build-type:          cmake
-  cmake-options:       -Dimmer_BUILD_DOCS=OFF -Dimmer_BUILD_TESTS=OFF -Dimmer_BUILD_EXAMPLES=OFF -Dimmer_BUILD_EXTRAS=OFF
+- name: Immer
+  url: https://github.com/arximboldi/immer/archive/refs/tags/v0.9.1.zip
+  cmake-options: -Dimmer_BUILD_DOCS=OFF -Dimmer_BUILD_TESTS=OFF -Dimmer_BUILD_EXAMPLES=OFF -Dimmer_BUILD_EXTRAS=OFF
 
-- name:                madronalib
-  git:                 https://github.com/madronalabs/madronalib.git
-  tag:                 2ea21d383f7073663fdb5df235d7d692801a1687
-  build-type:          cmake
-  add-src-files:       true
+- name: madronalib
+  git: https://github.com/madronalabs/madronalib.git
+  tag: 2ea21d383f7073663fdb5df235d7d692801a1687
+  build-type: cmake
+  add-src-files: true
 
-- name:                readerwriterqueue
-  url:                 https://github.com/cameron314/readerwriterqueue/archive/refs/tags/v1.0.7.zip
-  build-type:          cmake
+- name: readerwriterqueue
+  url: https://github.com/cameron314/readerwriterqueue/archive/refs/tags/v1.0.7.zip
+  build-type: cmake
