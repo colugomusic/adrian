@@ -1,9 +1,11 @@
 - name:                ads
   git:                 https://github.com/colugomusic/ads.git
+  track:               true
   build-type:          cmake
 
 - name:                ez
   git:                 https://github.com/colugomusic/ez.git
+  track:               true
   build-type:          cmake
 
 - name:                Immer
