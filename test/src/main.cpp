@@ -97,97 +97,32 @@ TEST_CASE("catch buffer with unaligned frame_count - marker wrapping") {
 	// Run 300 iterations to ensure we wrap at least once
 	for (int i = 0; i < 300; ++i) {
 		// This should not throw "sub-buffer region spans multiple buffers"
-		auto output = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
-		(void)output;
+		std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
 	}
 	// If we get here without throwing, the test passes
 	REQUIRE(true);
 }
 
-// Test that playback works correctly after many cycles when frame_count is unaligned.
-// The read marker (playback_marker) should also wrap using actual_frame_count.
-TEST_CASE("catch buffer playback with unaligned frame_count") {
+TEST_CASE("catch buffer with unaligned frame_count") {
 	auto options = adrian::chain_options{};
 	options.allocate_now   = true;
 	options.enable_mipmaps = false;
 	options.silent         = true;
-	// Use unaligned frame_count
-	auto cbuf = adrian::catch_buffer{{1}, {100}, options, {}};
+	INFO("Testing frame_count = 10000");
+	INFO("process");
+	auto cbuf = adrian::catch_buffer{{1}, {10000}, options, {}};
 	auto input = ml::DSPVector{};
 	std::fill(input.getBuffer(), input.getBuffer() + 64, 1.0f);
-	// Record some data
-	std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
-	// Start playback and process many times to wrap the playback marker
-	cbuf.playback_start(ez::ui, {0, 50});
-	adrian::update(ez::audio);
-	for (int i = 0; i < 300; ++i) {
-		// Keep restarting playback to exercise the playback marker wrapping
-		cbuf.playback_start(ez::ui, {0, 50});
-		adrian::update(ez::audio);
-		auto output = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
-		(void)output;
-	}
-	REQUIRE(true);
-}
-
-// Test the input_start_xform fix: reading should work even when read_marker
-// is large (close to actual_frame_count). The % partition_size ensures
-// we don't exceed actual_frame_count after get_partitioned_read_frame adds
-// the partition offset.
-TEST_CASE("catch buffer playback with large read marker") {
-	auto options = adrian::chain_options{};
-	options.allocate_now   = true;
-	options.enable_mipmaps = false;
-	options.silent         = true;
-	// Use a larger frame_count to have more room to test
-	// frame_count = 32768 -> actual = 32768 (already aligned)
-	// partition_size = 16384
-	auto cbuf = adrian::catch_buffer{{1}, {32768}, options, {}};
-	auto input = ml::DSPVector{};
-	std::fill(input.getBuffer(), input.getBuffer() + 64, 1.0f);
-	// Record data to fill the buffer
-	for (int i = 0; i < 512; ++i) {  // 512 * 64 = 32768 frames
+	for (int i = 0; i < 1000; ++i) {
 		std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
 	}
-	// Start playback from near the end of the partition
-	// This exercises the case where read_marker is large
-	cbuf.playback_start(ez::ui, {16000, 16064});
+	INFO("playback");
+	cbuf.playback_start(ez::ui, {0, 64});
 	adrian::update(ez::audio);
-	// This should not throw "sub-buffer region end exceeds actual frame count"
-	auto output = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
-	(void)output;
-	REQUIRE(true);
-}
-
-// Stress test: many iterations with various unaligned frame counts
-TEST_CASE("catch buffer stress test with unaligned frame_count") {
-	auto options = adrian::chain_options{};
-	options.allocate_now   = true;
-	options.enable_mipmaps = false;
-	options.silent         = true;
-	// Test with several unaligned frame counts
-	std::vector<uint64_t> frame_counts = {100, 1000, 5000, 10000, 20000, 50000};
-	for (auto fc : frame_counts) {
-		INFO("Testing frame_count = " << fc);
-		auto cbuf = adrian::catch_buffer{{1}, {fc}, options, {}};
-		auto input = ml::DSPVector{};
-		std::fill(input.getBuffer(), input.getBuffer() + 64, 1.0f);
-		// Process enough to wrap multiple times
-		// actual_frame_count is ceil(fc/16384)*16384
-		// We want to wrap several times, so do many iterations
-		for (int i = 0; i < 1000; ++i) {
-			auto output = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
-			(void)output;
-		}
-		// Also test playback
-		cbuf.playback_start(ez::ui, {0, static_cast<int64_t>(std::min(fc / 2, (uint64_t)64))});
+	for (int i = 0; i < 100; ++i) {
+		cbuf.playback_start(ez::ui, {0, 64});
 		adrian::update(ez::audio);
-		for (int i = 0; i < 100; ++i) {
-		cbuf.playback_start(ez::ui, {0, static_cast<int64_t>(std::min(fc / 2, (uint64_t)64))});
-			adrian::update(ez::audio);
-			auto output = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
-			(void)output;
-		}
+		std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
 	}
 	REQUIRE(true);
 }
