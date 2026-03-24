@@ -80,7 +80,7 @@ auto record(ez::audio_t thread, service::model* service, const model& m, const c
 			msg::to_ui::send(&service->critical.msgs_to_ui, msg::to_ui::catch_buffer::recording_started{cbuf.id, audio.record_start});
 			critical.record_active.store(true, std::memory_order_relaxed);
 		}
-		advance_write_marker(&critical, chain.frame_count, write_marker);
+		advance_write_marker(&critical, get_actual_frame_count(chain), write_marker);
 	}
 	else {
 		if (record_active) {
@@ -170,7 +170,7 @@ auto playback(ez::audio_t thread, service::model* service, const model& m, const
 	auto read_marker = critical.playback_marker.load(std::memory_order_relaxed);
 	if (chain.channel_count.value == 1) { out = playback_mono  (thread, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
 	else                                { out = playback_stereo(thread, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
-	read_marker = advance_marker(chain.frame_count, read_marker);
+	read_marker = advance_marker(get_actual_frame_count(chain), read_marker);
 	critical.playback_marker.store(read_marker, std::memory_order_relaxed);
 	if (read_marker >= cbuf.playback_region.end) {
 		audio.playback_active = false;
