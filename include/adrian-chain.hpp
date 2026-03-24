@@ -377,9 +377,18 @@ auto get_actual_frame_count(const chain::model& chain) -> ads::frame_count {
 	return {static_cast<uint64_t>(buffers_required * BUFFER_SIZE)};
 }
 
-[[nodiscard]] static
-auto is_valid_sub_buffer_region(const chain::model& chain, ads::frame_idx start, ads::frame_count frame_count) -> bool {
-	return frame_count <= BUFFER_SIZE && start + frame_count <= get_actual_frame_count(chain) && start / BUFFER_SIZE == (start + frame_count - 1ULL) / BUFFER_SIZE;
+static
+auto validate_sub_buffer_region(const chain::model& chain, ads::frame_idx start, ads::frame_count frame_count) -> void {
+	const auto actual_frame_count = get_actual_frame_count(chain);
+	if (frame_count > BUFFER_SIZE) {
+		throw std::runtime_error(std::format("frame_count {} exceeds buffer size {}", frame_count.value, BUFFER_SIZE));
+	}
+	if (start + frame_count > actual_frame_count) {
+		throw std::runtime_error(std::format("sub-buffer region end {} exceeds actual frame count {}", (start + frame_count).value, actual_frame_count.value));
+	}
+	if (start / BUFFER_SIZE != (start + frame_count - 1ULL) / BUFFER_SIZE) {
+		throw std::runtime_error(std::format("sub-buffer region spans multiple buffers (start: {}, frame_count: {}, buffer_size: {})", start.value, frame_count.value, BUFFER_SIZE));
+	}
 }
 
 template <typename ReadFn>
@@ -389,7 +398,7 @@ auto scary_read_one_valid_sub_buffer_region(const model& m, const chain::model& 
 		return {0};
 	}
 	assert (ch < chain.channel_count);
-	assert (is_valid_sub_buffer_region(chain, start, frame_count));
+	validate_sub_buffer_region(chain, start, frame_count);
 	const auto local_start     = start % BUFFER_SIZE;
 	const auto& buffer_service = get_buffer_service(m, chain, start);
 	auto& critical             = buffer_service->critical;
@@ -458,7 +467,7 @@ auto scary_write_one_valid_sub_buffer_region(const model& m, const chain::model&
 	if (!chain.buffers) {
 		return {0};
 	}
-	assert (is_valid_sub_buffer_region(chain, start, frame_count));
+	validate_sub_buffer_region(chain, start, frame_count);
 	const auto local_start      = start % BUFFER_SIZE;
 	const auto local_end        = local_start + frame_count;
 	const auto& buffer_service  = get_buffer_service(m, chain, start);
