@@ -133,8 +133,9 @@ auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model
 		ml::loadAligned(out, chunk);
 		return frame_count;
 	};
-	auto input_start_xform = [&](ads::frame_idx fr) -> ads::frame_idx {
-		return get_partitioned_read_frame(cbuf, chain.frame_count, fr);
+	const auto partition_size = get_partition_size(chain.frame_count);
+	auto input_start_xform = [&, partition_size](ads::frame_idx fr) -> ads::frame_idx {
+		return get_partitioned_read_frame(cbuf, chain.frame_count, fr % partition_size);
 	};
 	static constexpr auto input_region_alignment  = processor::input_region_alignment{BUFFER_SIZE};
 	static constexpr auto output_region_alignment = processor::OUTPUT_REGION_ALIGNMENT_IGNORE;
@@ -334,8 +335,9 @@ auto read(const model& m, const catch_buffer::model& cbuf, const chain::model& c
 	auto output = [&](const float* chunk, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
 		return read_fn(chunk, start, frame_count);
 	};
-	auto input_start_xform = [&](ads::frame_idx fr) -> ads::frame_idx {
-		return get_partitioned_read_frame(cbuf, chain.frame_count, fr);
+	const auto partition_size = get_partition_size(chain.frame_count);
+	auto input_start_xform = [&, partition_size](ads::frame_idx fr) -> ads::frame_idx {
+		return get_partitioned_read_frame(cbuf, chain.frame_count, fr % partition_size);
 	};
 	static constexpr auto input_region_alignment  = processor::input_region_alignment{BUFFER_SIZE};
 	static constexpr auto output_region_alignment = processor::OUTPUT_REGION_ALIGNMENT_IGNORE;
