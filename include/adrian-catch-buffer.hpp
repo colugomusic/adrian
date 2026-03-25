@@ -43,17 +43,18 @@ auto erase(ez::nort_t th, service::model* service, catch_buffer_id id) -> void {
 }
 
 [[nodiscard]] inline
-auto advance_marker(ads::frame_count frame_count, uint64_t current_marker) -> uint64_t {
+auto advance_marker_by_64(ads::frame_count frame_count, uint64_t current_marker) -> uint64_t {
 	current_marker += kFloatsPerDSPVector;
 	if (current_marker >= frame_count) {
 		current_marker -= frame_count;
 	}
+	assert (current_marker % kFloatsPerDSPVector == 0);
 	return current_marker;
 }
 
 inline
 auto advance_write_marker(catch_buffer::service::critical* critical, ads::frame_count frame_count, uint64_t current_marker) -> void {
-	critical->write_marker.store(advance_marker(frame_count, current_marker), std::memory_order_release);
+	critical->write_marker.store(advance_marker_by_64(frame_count, current_marker), std::memory_order_release);
 }
 
 [[nodiscard]] inline
@@ -118,9 +119,8 @@ auto get_partitioned_read_frame(const catch_buffer::model& cbuf, ads::frame_coun
 	return get_partitioned_read_frame(frame_count, write_marker, read_frame);
 }
 
-[[nodiscard]] inline
-auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::channel_idx ch, ads::frame_idx read_marker) -> ml::DSPVector {
-	ml::DSPVector out;
+inline
+auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_count partition_size, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frs, float* buffer) -> void {
 	auto input = [&](float* chunk, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
 		auto transfer = [&](const float* buffer, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
 			std::copy(buffer, buffer + frame_count.value, chunk);
@@ -128,51 +128,74 @@ auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model
 		};
 		return detail::scary_read_one_valid_sub_buffer_region(m, chain, ch, start, frame_count, transfer);
 	};
-	auto output = [&out](const float* chunk, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
-		assert (frame_count.value == kFloatsPerDSPVector);
-		ml::loadAligned(out, chunk);
+	auto output = [buffer, frs](const float* chunk, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
+		assert (frame_count == frs);
+		std::copy(chunk, chunk + frame_count.value, buffer);
 		return frame_count;
 	};
-	const auto partition_size = get_partition_size(chain.actual_frame_count);
 	auto input_start_xform = [&, partition_size](ads::frame_idx fr) -> ads::frame_idx {
 		return get_partitioned_read_frame(cbuf, chain.actual_frame_count, fr);
 	};
 	static constexpr auto input_region_alignment  = processor::input_region_alignment{BUFFER_SIZE};
 	static constexpr auto output_region_alignment = processor::OUTPUT_REGION_ALIGNMENT_IGNORE;
 	static constexpr auto chunk_size              = processor::chunk_size{kFloatsPerDSPVector};
-	static constexpr auto fixed_chunk_size        = processor::fixed_chunk_size::on;
-	const auto frames_processed = detail::processor::process<input_region_alignment, output_region_alignment, chunk_size, fixed_chunk_size>(read_marker, read_marker, {kFloatsPerDSPVector}, input, output, input_start_xform);
-	assert (frames_processed.value == kFloatsPerDSPVector);
-	return out;
+	static constexpr auto fixed_chunk_size        = processor::fixed_chunk_size::off;
+	const auto frames_processed = detail::processor::process<input_region_alignment, output_region_alignment, chunk_size, fixed_chunk_size>(start, start, frs, input, output, input_start_xform);
+	assert (frames_processed == frs);
 }
 
 [[nodiscard]] inline
-auto playback_mono(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
-	return ml::repeatRows<2>(playback_one_channel(th, m, cbuf, chain, ads::channel_idx{0}, read_marker));
-}
-
-[[nodiscard]] inline
-auto playback_stereo(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
-	ml::DSPVectorArray<2> out;
-	for (auto ch = ads::channel_idx{0}; ch < chain.channel_count; ++ch) {
-		auto& row = out.row(static_cast<int>(ch.value));
-		row = playback_one_channel(th, m, cbuf, chain, ch, read_marker);
+auto playback_one_channel(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::channel_idx ch, ads::frame_idx start) -> ml::DSPVector {
+	auto out                  = ml::DSPVector{};
+	const auto end            = start + kFloatsPerDSPVector;
+	const auto partition_size = get_partition_size(chain.actual_frame_count);
+	// Are we going to overflow the end of the partition?
+	// In that case we need to split the playback up into
+	// two parts to do the wraparound. Otherwise we would
+	// generate an invalid read.
+	if (end > partition_size) {
+		const auto part1_start = start;
+		const auto part1_frs   = partition_size - start;
+		const auto part2_start = ads::frame_idx{0};
+		const auto part2_frs   = ads::frame_count{kFloatsPerDSPVector} - part1_frs;
+		assert (part1_frs.value > 0);
+		assert (part2_frs.value > 0);
+		assert (part1_frs + part2_frs == ads::frame_count{kFloatsPerDSPVector});
+		playback_one_channel(th, m, cbuf, chain, partition_size, ads::channel_idx{0}, part1_start, part1_frs, out.getBuffer());
+		playback_one_channel(th, m, cbuf, chain, partition_size, ads::channel_idx{0}, part2_start, part2_frs, out.getBuffer() + part1_frs.value);
+	}
+	else {
+		playback_one_channel(th, m, cbuf, chain, partition_size, ads::channel_idx{0}, start, {kFloatsPerDSPVector}, out.getBuffer());
 	}
 	return out;
 }
 
 [[nodiscard]] inline
+auto playback_mono(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx start) -> ml::DSPVectorArray<2> {
+	return ml::repeatRows<2>(playback_one_channel(th, m, cbuf, chain, ads::channel_idx{0}, start));
+}
+
+[[nodiscard]] inline
+auto playback_stereo(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx start) -> ml::DSPVectorArray<2> {
+	auto out = ml::DSPVectorArray<2>{};
+	out.row(0) = playback_one_channel(th, m, cbuf, chain, ads::channel_idx{0}, start);
+	out.row(1) = playback_one_channel(th, m, cbuf, chain, ads::channel_idx{1}, start);
+	return out;
+}
+
+[[nodiscard]] inline
 auto playback(ez::audio_t th, service::model* service, const model& m, const catch_buffer::model& cbuf, const chain::model& chain) -> ml::DSPVectorArray<2> {
-	ml::DSPVectorArray<2> out;
-	auto& audio                = cbuf.service->audio;
-	auto& critical             = cbuf.service->critical;
+	auto out       = ml::DSPVectorArray<2>{};
+	auto& audio    = cbuf.service->audio;
+	auto& critical = cbuf.service->critical;
 	if (!audio.playback_active) { return {}; }
-	auto read_marker = critical.playback_marker.load(std::memory_order_relaxed);
-	if (chain.channel_count.value == 1) { out = playback_mono  (th, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
-	else                                { out = playback_stereo(th, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
-	read_marker = advance_marker(chain.actual_frame_count, read_marker);
-	critical.playback_marker.store(read_marker, std::memory_order_relaxed);
-	if (read_marker >= cbuf.playback_region.end) {
+	auto playback_progress = critical.playback_progress.load(std::memory_order_relaxed);
+	const auto beg = cbuf.playback_start + playback_progress;
+	if (chain.channel_count.value == 1) { out = playback_mono  (th, m, cbuf, chain, beg); }
+	else                                { out = playback_stereo(th, m, cbuf, chain, beg); }
+	playback_progress += kFloatsPerDSPVector;
+	critical.playback_progress.store(playback_progress, std::memory_order_relaxed);
+	if (playback_progress >= cbuf.playback_length) {
 		audio.playback_active = false;
 		msg::to_ui::send(&service->critical.msgs_to_ui, msg::to_ui::catch_buffer::playback_finished{cbuf.id});
 	}
@@ -261,8 +284,9 @@ auto get_requested_frame_count(ez::ui_t th, service::model* service, catch_buffe
 [[nodiscard]] inline
 auto get_playback_marker(const model& m, const catch_buffer::model& cbuf) -> ads::frame_idx {
 	const auto& chain = m.chains.at(cbuf.chain);
-	const auto marker = cbuf.service->critical.playback_marker.load(std::memory_order_relaxed);
-	return {static_cast<int64_t>(marker % get_partition_size(chain.actual_frame_count).value)};
+	const auto start    = cbuf.playback_start;
+	const auto progress = cbuf.service->critical.playback_progress.load(std::memory_order_relaxed);
+	return {static_cast<int64_t>((start.value + progress) % get_partition_size(chain.actual_frame_count).value)};
 }
 
 [[nodiscard]] inline
@@ -434,9 +458,10 @@ auto set_mipmaps_enabled(ez::nort_t th, service::model* service, catch_buffer_id
 }
 
 [[nodiscard]] inline
-auto set_playback_region(model&& m, catch_buffer_id id, ads::region region) -> model {
-	m.catch_buffers = m.catch_buffers.update(id, [region](detail::catch_buffer::model x){
-		x.playback_region = region;
+auto set_playback_region(model&& m, catch_buffer_id id, ads::frame_idx start, ads::frame_count frs) -> model {
+	m.catch_buffers = m.catch_buffers.update(id, [start, frs](detail::catch_buffer::model x){
+		x.playback_start  = start;
+		x.playback_length = frs;
 		return x;
 	});
 	return m;
@@ -448,7 +473,7 @@ auto playback_start(ez::audio_t, const model& m, catch_buffer_id id) -> void {
 	auto& audio           = cbuf.service->audio;
 	auto& critical        = cbuf.service->critical;
 	audio.playback_active = true;
-	critical.playback_marker.store(cbuf.playback_region.beg.value, std::memory_order_relaxed);
+	critical.playback_progress.store(0, std::memory_order_relaxed);
 }
 
 inline
@@ -462,15 +487,15 @@ auto playback_start(ez::audio_t th, catch_buffer_id id) -> void {
 }
 
 inline
-auto playback_start(ez::ui_t th, service::model* service, catch_buffer_id id, ads::region region) -> void {
-	const auto model = service->model.update_publish(th, [id, region](detail::model x){
-		return set_playback_region(std::move(x), id, region);
+auto playback_start(ez::ui_t th, service::model* service, catch_buffer_id id, ads::frame_idx start, ads::frame_count frs) -> void {
+	const auto model = service->model.update_publish(th, [id, start, frs](detail::model x){
+		return set_playback_region(std::move(x), id, start, frs);
 	});
 	const auto& cbuf = model.catch_buffers.at(id);
 	cbuf.service->ui.playback_active = true;
-	// This is only written at this point so that the UI th can immediately
+	// This is only written at this point so that the UI thread can immediately
 	// see the value. It's not required from the audio thread's perspective.
-	cbuf.service->critical.playback_marker.store(region.beg.value, std::memory_order_relaxed);
+	cbuf.service->critical.playback_progress.store(0, std::memory_order_relaxed);
 	// Tell the audio thread to start playback.
 	service->critical.msgs_to_audio.v.enqueue(msg::to_audio::catch_buffer::playback_start{id});
 }
@@ -542,7 +567,7 @@ auto reconfigure(ez::nort_t th, model&& m, catch_buffer_id id, ads::channel_coun
 	std::tie(m, cbuf.chain) = make_chain(th, std::move(m), chc, frc * 2, cbuf.chain_options, chain.client_data);
 	m = erase(std::move(m), chain.id);
 	m.catch_buffers = m.catch_buffers.insert(cbuf);
-	cbuf.service->critical.playback_marker.store(0, std::memory_order_relaxed);
+	cbuf.service->critical.playback_progress.store(0, std::memory_order_relaxed);
 	cbuf.service->critical.write_marker.store(0, std::memory_order_relaxed);
 	return m;
 }
@@ -614,8 +639,8 @@ auto make_catch_buffer(ez::nort_t th, ads::channel_count channel_count, ads::fra
 }
 
 inline
-auto playback_start(ez::ui_t th, catch_buffer_id id, ads::region region) -> void {
-	return detail::playback_start(th, &detail::service_, id, region);
+auto playback_start(ez::ui_t th, catch_buffer_id id, ads::frame_idx start, ads::frame_count frs) -> void {
+	return detail::playback_start(th, &detail::service_, id, start, frs);
 }
 
 inline
@@ -686,7 +711,7 @@ struct catch_buffer {
 	}
 	// If `frs` frames are requested, what would the actual frame count be?
 	[[nodiscard]] static auto get_actual_frame_count(ads::frame_count frs) -> ads::frame_count { return adrian::get_actual_frame_count(frs); }
-	auto playback_start(ez::ui_t th, ads::region region) -> void                        { adrian::playback_start(th, id_, region); }
+	auto playback_start(ez::ui_t th, ads::frame_idx start, ads::frame_count frs) -> void{ adrian::playback_start(th, id_, start, frs); }
 	auto playback_stop(ez::ui_t th) -> void                                             { adrian::playback_stop(th, id_); }
 	auto reconfigure(ez::nort_t th, ads::channel_count chc, ads::frame_count frc)       { adrian::reconfigure(th, id_, chc, frc); }
 	auto set_mipmaps_enabled(ez::nort_t th, bool enabled) -> void                       { adrian::set_mipmaps_enabled(th, id_, enabled); }

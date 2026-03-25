@@ -32,19 +32,19 @@ TEST_CASE("basic catch buffer wraparound sanity") {
 	auto output4 = ml::DSPVectorArray<2>{};
 	output0 = adrian::process(ez::audio, cbuf.id(), input0, 0.0f, 1.0f);
 	REQUIRE (output0 == ml::DSPVectorArray<2>{});
-	cbuf.playback_start(ez::ui, {0, 64});
+	cbuf.playback_start(ez::ui, {0}, {64});
 	adrian::update(ez::audio);
 	output1 = adrian::process(ez::audio, cbuf.id(), input1, 0.0f, 1.0f);
 	REQUIRE (output1.constRow(0) == input1);
-	cbuf.playback_start(ez::ui, {0, 64});
+	cbuf.playback_start(ez::ui, {0}, {64});
 	adrian::update(ez::audio);
 	output2 = adrian::process(ez::audio, cbuf.id(), input2, 0.0f, 1.0f);
 	REQUIRE (output2.constRow(0) == input2);
-	cbuf.playback_start(ez::ui, {0, 64});
+	cbuf.playback_start(ez::ui, {0}, {64});
 	adrian::update(ez::audio);
 	output3 = adrian::process(ez::audio, cbuf.id(), input3, 0.0f, 1.0f, true);
 	REQUIRE (output3.constRow(0) == input2);
-	cbuf.playback_start(ez::ui, {0, 64});
+	cbuf.playback_start(ez::ui, {0}, {64});
 	adrian::update(ez::audio);
 	output4 = adrian::process(ez::audio, cbuf.id(), input4, 0.0f, 1.0f, true);
 	REQUIRE (output4.constRow(0) == input2);
@@ -103,11 +103,22 @@ TEST_CASE("catch buffer with unaligned frame_count") {
 		std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
 	}
 	INFO("playback");
-	cbuf.playback_start(ez::ui, {0, 64});
+	cbuf.playback_start(ez::ui, {0}, {64});
 	adrian::update(ez::audio);
 	for (int i = 0; i < 100; ++i) {
-		cbuf.playback_start(ez::ui, {0, 64});
+		cbuf.playback_start(ez::ui, {0}, {64});
 		adrian::update(ez::audio);
 		std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
 	}
+}
+
+TEST_CASE("catch buffer overflowing playback region") {
+	auto options = adrian::chain_options{};
+	options.allocate_now   = true;
+	options.enable_mipmaps = false;
+	options.silent         = true;
+	auto cbuf = adrian::catch_buffer{{1}, {64}, options, {}};
+	cbuf.playback_start(ez::ui, {60}, {70});
+	adrian::update(ez::audio);
+	std::ignore = adrian::process(ez::audio, cbuf.id(), ml::DSPVector{}, 0.0f, 1.0f, true);
 }

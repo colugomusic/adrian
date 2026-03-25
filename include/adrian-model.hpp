@@ -140,9 +140,9 @@ struct loading_chain {
 namespace catch_buffer::service {
 
 struct critical {
-	std::atomic<uint64_t> write_marker    = 0;
-	std::atomic<uint64_t> playback_marker = 0;
-	std::atomic<bool>     record_active   = false;
+	std::atomic<uint64_t> write_marker      = 0;
+	std::atomic<uint64_t> playback_progress = 0;
+	std::atomic<bool>     record_active     = false;
 };
 
 struct audio {
@@ -173,7 +173,8 @@ struct model {
 	adrian::chain_options chain_options;
 	std::any              client_data;
 	service::ptr          service;
-	ads::region           playback_region;
+	ads::frame_idx        playback_start;
+	ads::frame_count      playback_length;
 };
 
 } // catch_buffer
