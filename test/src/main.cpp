@@ -76,32 +76,17 @@ TEST_CASE("catch buffer copy") {
 	REQUIRE (dest_buf.at(ads::frame_idx{63}) == 4.0f);
 }
 
-// Test that markers wrap correctly when frame_count is not aligned to BUFFER_SIZE.
-// The write marker should wrap using actual_frame_count (BUFFER_SIZE-aligned) to
-// avoid landing on positions that would cause a 64-frame write to span buffer boundaries.
 TEST_CASE("catch buffer with unaligned frame_count - marker wrapping") {
 	auto options = adrian::chain_options{};
 	options.allocate_now   = true;
 	options.enable_mipmaps = false;
 	options.silent         = true;
-	// Use a frame_count that is NOT a multiple of BUFFER_SIZE (16384) or even 64
-	// This would previously cause marker misalignment after wrapping
-	// actual_frame_count will be 16384 (rounds up from 50000 / 16384 = 3.05 -> 4 buffers = 65536)
-	// Wait, let's use a smaller value that still demonstrates the issue
-	// frame_count = 100 -> actual = 16384
-	// After 16384/64 = 256 iterations, marker wraps
 	auto cbuf = adrian::catch_buffer{{1}, {100}, options, {}};
 	auto input = ml::DSPVector{};
 	std::fill(input.getBuffer(), input.getBuffer() + 64, 1.0f);
-	// Process enough times to wrap the marker multiple times
-	// actual_frame_count = 16384, so 256 * 64 = 16384 frames per cycle
-	// Run 300 iterations to ensure we wrap at least once
 	for (int i = 0; i < 300; ++i) {
-		// This should not throw "sub-buffer region spans multiple buffers"
 		std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
 	}
-	// If we get here without throwing, the test passes
-	REQUIRE(true);
 }
 
 TEST_CASE("catch buffer with unaligned frame_count") {
@@ -125,5 +110,4 @@ TEST_CASE("catch buffer with unaligned frame_count") {
 		adrian::update(ez::audio);
 		std::ignore = adrian::process(ez::audio, cbuf.id(), input, 0.0f, 1.0f);
 	}
-	REQUIRE(true);
 }
