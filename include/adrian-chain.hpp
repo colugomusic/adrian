@@ -135,13 +135,13 @@ auto get_buffer_service(const model& m, const chain::model& chain, ads::frame_id
 }
 
 [[nodiscard]] inline
-auto allocate_entire_chain_now(ez::nort_t thread, model m, chain_id id) -> model {
+auto allocate_entire_chain_now(ez::nort_t th, model m, chain_id id) -> model {
 	auto chain = m.chains.at(id);
-	const auto required_buffer_count = buffer_count(chain.frame_count);
+	const auto required_buffer_count = buffer_count(chain.requested_frame_count);
 	auto buffers = immer::vector<buffer_idx>{};
 	for (size_t i = 0; i < required_buffer_count; i++) {
 		buffer_idx idx;
-		std::tie(m, idx) = find_unused_or_create_new_buffer(thread, std::move(m), chain.channel_count);
+		std::tie(m, idx) = find_unused_or_create_new_buffer(th, std::move(m), chain.channel_count);
 		m = set_as_in_use(std::move(m), chain.channel_count, idx);
 		buffers = buffers.push_back(idx);
 	}
@@ -151,18 +151,19 @@ auto allocate_entire_chain_now(ez::nort_t thread, model m, chain_id id) -> model
 }
 
 [[nodiscard]] inline
-auto make_chain(ez::nort_t thread, model m, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> std::tuple<model, chain_id> {
+auto make_chain(ez::nort_t th, model m, ads::channel_count channel_count, ads::frame_count requested_frame_count, chain_options options, std::any client_data) -> std::tuple<model, chain_id> {
 	chain::model chain;
-	chain.id            = {++m.next_id};
-	chain.flags         = set_flag(chain.flags, chain.flags.loading, !options.allocate_now);
-	chain.flags         = set_flag(chain.flags, chain.flags.generate_mipmaps, options.enable_mipmaps);
-	chain.flags         = set_flag(chain.flags, chain.flags.silent, options.silent);
-	chain.channel_count = channel_count;
-	chain.frame_count   = frame_count;
-	chain.buffers       = std::nullopt;
-	chain.client_data   = client_data;
+	chain.id                    = {++m.next_id};
+	chain.flags                 = set_flag(chain.flags, chain.flags.loading, !options.allocate_now);
+	chain.flags                 = set_flag(chain.flags, chain.flags.generate_mipmaps, options.enable_mipmaps);
+	chain.flags                 = set_flag(chain.flags, chain.flags.silent, options.silent);
+	chain.channel_count         = channel_count;
+	chain.actual_frame_count    = {buffer_count(requested_frame_count) * BUFFER_SIZE};
+	chain.requested_frame_count = requested_frame_count;
+	chain.buffers               = std::nullopt;
+	chain.client_data           = client_data;
 	m.chains = std::move(m.chains).insert(chain);
-	if (options.allocate_now) { m = allocate_entire_chain_now(thread, std::move(m), chain.id); }
+	if (options.allocate_now) { m = allocate_entire_chain_now(th, std::move(m), chain.id); }
 	else                      { m = make_loading_chain(std::move(m), chain.id, channel_count); }
 	return std::make_tuple(std::move(m), chain.id);
 }
@@ -185,16 +186,16 @@ auto erase(model m, chain_id id) -> model {
 }
 
 inline
-auto erase(ez::nort_t thread, service::model* service, chain_id id) -> void {
-	service->model.update_publish(thread, [id](detail::model&& m){
+auto erase(ez::nort_t th, service::model* service, chain_id id) -> void {
+	service->model.update_publish(th, [id](detail::model&& m){
 		return erase(std::move(m), id);
 	});
 }
 
 [[nodiscard]] inline
-auto make_chain(ez::nort_t thread, service::model* service, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> chain_id {
+auto make_chain(ez::nort_t th, service::model* service, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> chain_id {
 	chain_id id;
-	service->model.update_publish(thread, [channel_count, frame_count, options, client_data, &id](detail::model&& m) mutable {
+	service->model.update_publish(th, [channel_count, frame_count, options, client_data, &id](detail::model&& m) mutable {
 		std::tie(m, id) = detail::make_chain(ez::nort, std::move(m), channel_count, frame_count, options, client_data);
 		return std::move(m);
 	});
@@ -204,10 +205,11 @@ auto make_chain(ez::nort_t thread, service::model* service, ads::channel_count c
 [[nodiscard]] inline
 auto resize(model m, chain_id id, ads::frame_count required_frame_count) -> model {
 	const auto c = m.chains.at(id);
-	const auto current_buffer_count  = buffer_count(c.frame_count);
+	const auto current_buffer_count  = buffer_count(c.requested_frame_count);
 	const auto required_buffer_count = buffer_count(required_frame_count);
-	m.chains = std::move(m.chains).update(id, [required_frame_count](chain::model x){
-		x.frame_count = required_frame_count;
+	m.chains = std::move(m.chains).update(id, [required_frame_count, required_buffer_count](chain::model x){
+		x.requested_frame_count = required_frame_count;
+		x.actual_frame_count    = {required_buffer_count * BUFFER_SIZE};
 		return x;
 	});
 	if (current_buffer_count == required_buffer_count) {
@@ -226,8 +228,8 @@ auto resize(model m, chain_id id, ads::frame_count required_frame_count) -> mode
 }
 
 inline
-auto resize(ez::nort_t thread, service::model* service, chain_id id, ads::frame_count frame_count) -> void {
-	service->model.update_publish(thread, [id, frame_count](detail::model&& m){
+auto resize(ez::nort_t th, service::model* service, chain_id id, ads::frame_count frame_count) -> void {
+	service->model.update_publish(th, [id, frame_count](detail::model&& m){
 		return resize(std::move(m), id, frame_count);
 	});
 }
@@ -371,20 +373,13 @@ auto process(ads::frame_idx input_start, ads::frame_idx output_start, ads::frame
 
 } // processor
 
-[[nodiscard]] static
-auto get_actual_frame_count(const chain::model& chain) -> ads::frame_count {
-	const auto buffers_required = std::ceil(static_cast<float>(chain.frame_count.value) / BUFFER_SIZE);
-	return {static_cast<uint64_t>(buffers_required * BUFFER_SIZE)};
-}
-
 static
 auto validate_sub_buffer_region(const chain::model& chain, ads::frame_idx start, ads::frame_count frame_count) -> void {
-	const auto actual_frame_count = get_actual_frame_count(chain);
 	if (frame_count > BUFFER_SIZE) {
 		throw std::runtime_error(std::format("frame_count {} exceeds buffer size {}", frame_count.value, BUFFER_SIZE));
 	}
-	if (start + frame_count > actual_frame_count) {
-		throw std::runtime_error(std::format("sub-buffer region end {} exceeds actual frame count {}", (start + frame_count).value, actual_frame_count.value));
+	if (start + frame_count > chain.actual_frame_count) {
+		throw std::runtime_error(std::format("sub-buffer region end {} exceeds actual frame count {}", (start + frame_count).value, chain.actual_frame_count.value));
 	}
 	if (start / BUFFER_SIZE != (start + frame_count - 1ULL) / BUFFER_SIZE) {
 		throw std::runtime_error(std::format("sub-buffer region spans multiple buffers (start: {}, frame_count: {}, buffer_size: {})", start.value, frame_count.value, BUFFER_SIZE));
@@ -410,11 +405,10 @@ auto scary_read_random(const model& m, const chain::model& chain, const std::arr
 	if (!chain.buffers) {
 		return;
 	}
-	const auto frame_count = get_actual_frame_count(chain);
 	for (auto ch = ads::channel_idx{}; ch < chain.channel_count; ch++) {
 		ads::frame_idx frame_counter;
 		for (auto fr : frames) {
-			if (fr < 0 || fr >= frame_count) {
+			if (fr < 0 || fr >= chain.actual_frame_count) {
 				read_fn(0.0f, ch, frame_counter++);
 				continue;
 			}
@@ -487,11 +481,10 @@ auto scary_write_random(const model& m, const chain::model& chain, const std::ar
 	if (!chain.buffers) {
 		return;
 	}
-	const auto frame_count = get_actual_frame_count(chain);
 	for (auto ch = ads::channel_idx{}; ch < chain.channel_count; ch++) {
 		auto frame_counter = ads::frame_idx{0};
 		for (auto fr : frames) {
-			if (fr < 0 || fr >= frame_count) {
+			if (fr < 0 || fr >= chain.actual_frame_count) {
 				frame_counter++;
 				continue;
 			}
@@ -587,51 +580,51 @@ auto scary_write(const model& m, chain_id id, ads::frame_idx start, ads::frame_c
 }
 
 template <typename ReadFn>
-auto scary_read_one_valid_sub_buffer_region(ez::audio_t thread, service::model* service, chain_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> void {
-	return scary_read_one_valid_sub_buffer_region(*service->model.read(thread), id, ch, start, frame_count, read_fn);
+auto scary_read_one_valid_sub_buffer_region(ez::audio_t th, service::model* service, chain_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> void {
+	return scary_read_one_valid_sub_buffer_region(*service->model.read(th), id, ch, start, frame_count, read_fn);
 }
 
 template <typename ReadFn>
-auto scary_read_random(ez::audio_t thread, service::model* service, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
-	return scary_read_random(*service->model.read(thread), id, frames, read_fn);
+auto scary_read_random(ez::audio_t th, service::model* service, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
+	return scary_read_random(*service->model.read(th), id, frames, read_fn);
 }
 
 template <size_t CHUNK_SIZE, typename ReadFn>
 	requires ads::concepts::is_single_channel_read_fn<float, ReadFn>
-auto scary_read(ez::audio_t thread, service::model* service, chain_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
-	return scary_read<CHUNK_SIZE>(*service->model.read(thread), id, ch, start, frame_count, read);
+auto scary_read(ez::audio_t th, service::model* service, chain_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
+	return scary_read<CHUNK_SIZE>(*service->model.read(th), id, ch, start, frame_count, read);
 }
 
 template <size_t CHUNK_SIZE, typename ReadFn>
 	requires ads::concepts::is_multi_channel_read_fn<float, ReadFn>
-auto scary_read(ez::audio_t thread, service::model* service, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
-	return scary_read<CHUNK_SIZE>(*service->model.read(thread), id, start, frame_count, read);
+auto scary_read(ez::audio_t th, service::model* service, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
+	return scary_read<CHUNK_SIZE>(*service->model.read(th), id, start, frame_count, read);
 }
 
 template <typename WriteFn>
-auto scary_write_one_valid_sub_buffer_region(ez::audio_t thread, service::model* service, chain_id id, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
-	return scary_write_one_valid_sub_buffer_region(*service->model.read(thread), id, start, frame_count, write);
+auto scary_write_one_valid_sub_buffer_region(ez::audio_t th, service::model* service, chain_id id, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
+	return scary_write_one_valid_sub_buffer_region(*service->model.read(th), id, start, frame_count, write);
 }
 
 template <typename WriteFn>
-auto scary_write_random(ez::audio_t thread, service::model* service, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, WriteFn write) -> void {
-	return scary_write_random(*service->model.read(thread), id, frames, write);
+auto scary_write_random(ez::audio_t th, service::model* service, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, WriteFn write) -> void {
+	return scary_write_random(*service->model.read(th), id, frames, write);
 }
 
 template <size_t CHUNK_SIZE, typename WriteFn>
 	requires ads::concepts::is_single_channel_write_fn<float, WriteFn>
-auto scary_write(ez::audio_t thread, service::model* service, chain_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
-	return scary_write<CHUNK_SIZE>(*service->model.read(thread), id, ch, start, frame_count, write);
+auto scary_write(ez::audio_t th, service::model* service, chain_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
+	return scary_write<CHUNK_SIZE>(*service->model.read(th), id, ch, start, frame_count, write);
 }
 
 template <size_t CHUNK_SIZE, typename WriteFn>
 	requires ads::concepts::is_multi_channel_write_fn<float, WriteFn>
-auto scary_write(ez::audio_t thread, service::model* service, chain_id id, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
-	return scary_write<CHUNK_SIZE>(*service->model.read(thread), id, start, frame_count, write);
+auto scary_write(ez::audio_t th, service::model* service, chain_id id, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
+	return scary_write<CHUNK_SIZE>(*service->model.read(th), id, start, frame_count, write);
 }
 
 inline
-auto diff(ez::ui_t thread, chains was, chains now, concepts::push_ui_event auto push_ui_event) -> void {
+auto diff(ez::ui_t th, chains was, chains now, concepts::push_ui_event auto push_ui_event) -> void {
 	auto on_added = [push_ui_event](const chain::model& v) {
 		if (should_generate_ui_events(v) && is_loading(v)) {
 			push_ui_event(ui::events::chain::load_begin{v.id, v.client_data});
@@ -667,8 +660,8 @@ auto set_mipmaps_enabled(model&& m, chain_id id, bool enabled) -> model {
 }
 
 inline
-auto set_mipmaps_enabled(ez::nort_t thread, service::model* service, chain_id id, bool enabled) -> void {
-	service->model.update_publish(thread, [id, enabled](detail::model x){
+auto set_mipmaps_enabled(ez::nort_t th, service::model* service, chain_id id, bool enabled) -> void {
+	service->model.update_publish(th, [id, enabled](detail::model x){
 		return set_mipmaps_enabled(std::move(x), id, enabled);
 	});
 }
@@ -699,13 +692,13 @@ auto read_mipmap(const model& m, chain_id id, double bin_size, ads::channel_idx 
 }
 
 [[nodiscard]] inline
-auto update_mipmap(ez::ui_t thread, const model& m, const chain::model& chain) -> bool {
+auto update_mipmap(ez::ui_t th, const model& m, const chain::model& chain) -> bool {
 	if (!should_generate_mipmaps(chain)) { return false; }
 	if (!chain.buffers)                  { return false; }
 	const auto services = m.buffers.at(chain.channel_count.value).service;
 	bool mipmap_changed = false;
 	for (const auto buffer_idx : *chain.buffers) {
-		mipmap_changed |= update_mipmap(thread, services.at(buffer_idx.value).get());
+		mipmap_changed |= update_mipmap(th, services.at(buffer_idx.value).get());
 	}
 	return mipmap_changed;
 }
@@ -716,8 +709,8 @@ auto update_mipmap(ez::ui_t thread, const model& m, const chain::model& chain) -
 namespace adrian {
 
 inline
-auto clear_mipmap(ez::ui_t thread, chain_id id) -> void {
-	const auto& model = detail::service_.model.read(thread);
+auto clear_mipmap(ez::ui_t th, chain_id id) -> void {
+	const auto& model = detail::service_.model.read(th);
 	const auto& chain = model.chains.at(id);
 	if (!chain.buffers) {
 		return;
@@ -729,35 +722,42 @@ auto clear_mipmap(ez::ui_t thread, chain_id id) -> void {
 }
 
 [[nodiscard]] inline
-auto get_frame_count(ez::ui_t thread, chain_id id) -> ads::frame_count {
-	const auto& model = detail::service_.model.read(thread);
+auto get_actual_frame_count(ez::ui_t th, chain_id id) -> ads::frame_count {
+	const auto& model = detail::service_.model.read(th);
 	const auto& chain = model.chains.at(id);
-	return chain.frame_count;
+	return chain.actual_frame_count;
 }
 
 [[nodiscard]] inline
-auto is_ready(ez::ui_t thread, chain_id id) -> bool {
-	return detail::is_ready(detail::service_.model.read(thread), id);
+auto get_requested_frame_count(ez::ui_t th, chain_id id) -> ads::frame_count {
+	const auto& model = detail::service_.model.read(th);
+	const auto& chain = model.chains.at(id);
+	return chain.requested_frame_count;
 }
 
 [[nodiscard]] inline
-auto make_chain(ez::nort_t thread, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> chain_id {
-	return detail::make_chain(thread, &detail::service_, channel_count, frame_count, options, client_data);
+auto is_ready(ez::ui_t th, chain_id id) -> bool {
+	return detail::is_ready(detail::service_.model.read(th), id);
 }
 
 [[nodiscard]] inline
-auto read_mipmap(ez::ui_t thread, chain_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
-	return detail::read_mipmap(detail::service_.model.read(thread), id, bin_size, ch, fr);
+auto make_chain(ez::nort_t th, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> chain_id {
+	return detail::make_chain(th, &detail::service_, channel_count, frame_count, options, client_data);
+}
+
+[[nodiscard]] inline
+auto read_mipmap(ez::ui_t th, chain_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
+	return detail::read_mipmap(detail::service_.model.read(th), id, bin_size, ch, fr);
 }
 
 inline
-auto erase(ez::nort_t thread, chain_id id) -> void {
-	detail::erase(thread, &detail::service_, id);
+auto erase(ez::nort_t th, chain_id id) -> void {
+	detail::erase(th, &detail::service_, id);
 }
 
 inline
-auto resize(ez::nort_t thread, chain_id id, ads::frame_count frame_count) -> void {
-	detail::resize(thread, &detail::service_, id, frame_count);
+auto resize(ez::nort_t th, chain_id id, ads::frame_count frame_count) -> void {
+	detail::resize(th, &detail::service_, id, frame_count);
 }
 
 // Unsychronized buffer read.
@@ -770,8 +770,8 @@ auto resize(ez::nort_t thread, chain_id id, ads::frame_count frame_count) -> voi
 //   this is a no-op and zero is returned.
 template <typename ReadFn>
 	requires ads::concepts::is_read_fn<float, ReadFn>
-auto scary_read_one_valid_sub_buffer_region(ez::rt_t thread, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
-	return detail::scary_read_one_valid_sub_buffer_region(thread, &detail::service_, id, start, frame_count, read);
+auto scary_read_one_valid_sub_buffer_region(ez::rt_t th, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
+	return detail::scary_read_one_valid_sub_buffer_region(th, &detail::service_, id, start, frame_count, read);
 }
 
 // Unsychronized buffer write.
@@ -785,8 +785,8 @@ auto scary_read_one_valid_sub_buffer_region(ez::rt_t thread, chain_id id, ads::f
 //   this is a no-op and zero is returned.
 template <typename WriteFn>
 	requires ads::concepts::is_write_fn<float, WriteFn>
-auto scary_write_one_valid_sub_buffer_region(ez::rt_t thread, chain_id id, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
-	return detail::scary_write_one_valid_sub_buffer_region(thread, &detail::service_, id, start, frame_count, write);
+auto scary_write_one_valid_sub_buffer_region(ez::rt_t th, chain_id id, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
+	return detail::scary_write_one_valid_sub_buffer_region(th, &detail::service_, id, start, frame_count, write);
 }
 
 // Read "random" frames.
@@ -796,8 +796,8 @@ auto scary_write_one_valid_sub_buffer_region(ez::rt_t thread, chain_id id, ads::
 // The worst-case scenario is that the provided frames are in a completely
 // random order.
 template <typename ReadFn>
-auto scary_read_random(ez::rt_t thread, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
-	return detail::scary_read_random(thread, &detail::service_, id, frames, read_fn);
+auto scary_read_random(ez::rt_t th, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
+	return detail::scary_read_random(th, &detail::service_, id, frames, read_fn);
 }
 
 // Write "random" frames.
@@ -807,8 +807,8 @@ auto scary_read_random(ez::rt_t thread, chain_id id, const std::array<ads::frame
 // The worst-case scenario is that the provided frames are in a completely
 // random order.
 template <typename ProviderFn>
-auto scary_write_random(ez::audio_t thread, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ProviderFn provider_fn) -> void {
-	return detail::scary_write_random(thread, &detail::service_, id, frames, provider_fn);
+auto scary_write_random(ez::audio_t th, chain_id id, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ProviderFn provider_fn) -> void {
+	return detail::scary_write_random(th, &detail::service_, id, frames, provider_fn);
 }
 
 // Read a region of the buffer which may not necessarily fall
@@ -816,8 +816,8 @@ auto scary_write_random(ez::audio_t thread, chain_id id, const std::array<ads::f
 // Reads will happen in chunks of <= MAX_CHUNK_SIZE.
 template <size_t MAX_CHUNK_SIZE, typename ReadFn>
 	requires ads::concepts::is_read_fn<float, ReadFn>
-auto scary_read(ez::rt_t thread, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, ReadFn read) -> ads::frame_count {
-	return detail::scary_read<MAX_CHUNK_SIZE>(thread, &detail::service_, id, start, frame_count, chunk_size, read);
+auto scary_read(ez::rt_t th, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, ReadFn read) -> ads::frame_count {
+	return detail::scary_read<MAX_CHUNK_SIZE>(th, &detail::service_, id, start, frame_count, chunk_size, read);
 }
 
 // Write a region of the buffer which may not necessarily fall
@@ -825,13 +825,13 @@ auto scary_read(ez::rt_t thread, chain_id id, ads::frame_idx start, ads::frame_c
 // Writes will happen in chunks of <= MAX_CHUNK_SIZE.
 template <size_t MAX_CHUNK_SIZE, typename WriteFn>
 	requires ads::concepts::is_write_fn<float, WriteFn>
-auto scary_write(ez::rt_t thread, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, WriteFn write) -> ads::frame_count {
-	return detail::scary_write<MAX_CHUNK_SIZE>(thread, &detail::service_, id, start, frame_count, chunk_size, write);
+auto scary_write(ez::rt_t th, chain_id id, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, WriteFn write) -> ads::frame_count {
+	return detail::scary_write<MAX_CHUNK_SIZE>(th, &detail::service_, id, start, frame_count, chunk_size, write);
 }
 
 inline
-auto set_mipmaps_enabled(ez::nort_t thread, chain_id id, bool enabled) -> void {
-	detail::set_mipmaps_enabled(thread, &detail::service_, id, enabled);
+auto set_mipmaps_enabled(ez::nort_t th, chain_id id, bool enabled) -> void {
+	detail::set_mipmaps_enabled(th, &detail::service_, id, enabled);
 }
 
 // RAII chain wrapper
@@ -853,43 +853,42 @@ struct chain {
 		rhs.id_ = {};
 		return *this;
 	}
-	auto clear_mipmap(ez::ui_t thread) -> void {
-		adrian::clear_mipmap(thread, id_);
-	}
-	auto is_ready(ez::ui_t thread) -> bool                                             { return adrian::is_ready(thread, id_); }
-	auto resize(ez::nort_t thread, ads::frame_count frame_count) -> void               { return adrian::resize(thread, id_, frame_count); }
-	auto read_mipmap(ez::ui_t thread, double bin_size, ads::channel_idx ch, double fr) { return adrian::read_mipmap(thread, id_, bin_size, ch, fr); }
-	auto set_mipmaps_enabled(ez::nort_t thread, bool enabled) -> void                  { return adrian::set_mipmaps_enabled(thread, id_, enabled); }
-	[[nodiscard]] auto get_frame_count(ez::ui_t thread) const                          { return adrian::get_frame_count(thread, id_); }
-	[[nodiscard]] auto id() const -> chain_id                                          { return id_; }
+	auto clear_mipmap(ez::ui_t th) -> void                                         { adrian::clear_mipmap(th, id_); }
+	auto resize(ez::nort_t th, ads::frame_count frame_count) -> void               { return adrian::resize(th, id_, frame_count); }
+	auto set_mipmaps_enabled(ez::nort_t th, bool enabled) -> void                  { return adrian::set_mipmaps_enabled(th, id_, enabled); }
+	[[nodiscard]] auto is_ready(ez::ui_t th) -> bool                                             { return adrian::is_ready(th, id_); }
+	[[nodiscard]] auto read_mipmap(ez::ui_t th, double bin_size, ads::channel_idx ch, double fr) { return adrian::read_mipmap(th, id_, bin_size, ch, fr); }
+	[[nodiscard]] auto get_actual_frame_count(ez::ui_t th) const                                 { return adrian::get_actual_frame_count(th, id_); }
+	[[nodiscard]] auto get_requested_frame_count(ez::ui_t th) const                              { return adrian::get_requested_frame_count(th, id_); }
+	[[nodiscard]] auto id() const -> chain_id                                                    { return id_; }
 	template <typename ReadFn>
-	auto scary_read_random(ez::rt_t thread, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
-		return adrian::scary_read_random(thread, id_, frames, read_fn);
+	auto scary_read_random(ez::rt_t th, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ReadFn read_fn) -> void {
+		return adrian::scary_read_random(th, id_, frames, read_fn);
 	}
 	template <typename ProviderFn>
 		requires ads::concepts::is_multi_channel_provider_fn<float, ProviderFn>
-	auto scary_write_random(ez::rt_t thread, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ProviderFn provider_fn) -> void {
-		return adrian::scary_write_random(thread, id_, frames, provider_fn);
+	auto scary_write_random(ez::rt_t th, const std::array<ads::frame_idx, kFloatsPerDSPVector>& frames, ProviderFn provider_fn) -> void {
+		return adrian::scary_write_random(th, id_, frames, provider_fn);
 	}
 	template <typename ReadFn>
 		requires ads::concepts::is_read_fn<float, ReadFn>
-	auto scary_read_one_valid_sub_buffer_region(ez::rt_t thread, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
-		return adrian::scary_read_one_valid_sub_buffer_region(thread, id_, start, frame_count, read);
+	auto scary_read_one_valid_sub_buffer_region(ez::rt_t th, ads::frame_idx start, ads::frame_count frame_count, ReadFn read) -> ads::frame_count {
+		return adrian::scary_read_one_valid_sub_buffer_region(th, id_, start, frame_count, read);
 	}
 	template <typename WriteFn>
 		requires ads::concepts::is_write_fn<float, WriteFn>
-	auto scary_write_one_valid_sub_buffer_region(ez::rt_t thread, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
-		return adrian::scary_write_one_valid_sub_buffer_region(thread, id_, start, frame_count, write);
+	auto scary_write_one_valid_sub_buffer_region(ez::rt_t th, ads::frame_idx start, ads::frame_count frame_count, WriteFn write) -> ads::frame_count {
+		return adrian::scary_write_one_valid_sub_buffer_region(th, id_, start, frame_count, write);
 	}
 	template <typename ReadFn>
 		requires ads::concepts::is_read_fn<float, ReadFn>
-	auto scary_read(ez::rt_t thread, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, ReadFn read) -> ads::frame_count {
-		return adrian::scary_read(thread, id_, start, frame_count, chunk_size, read);
+	auto scary_read(ez::rt_t th, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, ReadFn read) -> ads::frame_count {
+		return adrian::scary_read(th, id_, start, frame_count, chunk_size, read);
 	}
 	template <typename WriteFn>
 		requires ads::concepts::is_write_fn<float, WriteFn>
-	auto scary_write(ez::rt_t thread, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, WriteFn write) -> ads::frame_count {
-		return adrian::scary_write(thread, id_, start, frame_count, chunk_size, write);
+	auto scary_write(ez::rt_t th, ads::frame_idx start, ads::frame_count frame_count, ads::frame_count chunk_size, WriteFn write) -> ads::frame_count {
+		return adrian::scary_write(th, id_, start, frame_count, chunk_size, write);
 	}
 private:
 	auto erase() -> void {

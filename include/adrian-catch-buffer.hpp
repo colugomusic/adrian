@@ -5,22 +5,22 @@
 namespace adrian::detail {
 
 [[nodiscard]] inline
-auto make_catch_buffer(ez::nort_t thread, model m, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> std::tuple<model, catch_buffer_id> {
+auto make_catch_buffer(ez::nort_t th, model m, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> std::tuple<model, catch_buffer_id> {
 	catch_buffer::model cbuf;
 	cbuf.id            = {++m.next_id};
 	cbuf.service       = std::make_shared<catch_buffer::service::model>();
 	cbuf.chain_options = options;
 	cbuf.client_data   = client_data;
 	peak_gate::init(&cbuf.service->audio.peak_gate, channel_count, kFloatsPerDSPVector * 128.0f);
-	std::tie(m, cbuf.chain) = make_chain(thread, std::move(m), channel_count, frame_count * 2, options, client_data);
+	std::tie(m, cbuf.chain) = make_chain(th, std::move(m), channel_count, frame_count * 2, options, client_data);
 	m.catch_buffers = std::move(m.catch_buffers).insert(cbuf);
 	return std::make_tuple(std::move(m), cbuf.id);
 }
 
 [[nodiscard]] inline
-auto make_catch_buffer(ez::nort_t thread, service::model* service, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> catch_buffer_id {
+auto make_catch_buffer(ez::nort_t th, service::model* service, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> catch_buffer_id {
 	catch_buffer_id id;
-	service->model.update_publish(thread, [channel_count, frame_count, options, client_data, &id](detail::model&& m) mutable {
+	service->model.update_publish(th, [channel_count, frame_count, options, client_data, &id](detail::model&& m) mutable {
 		std::tie(m, id) = detail::make_catch_buffer(ez::nort, std::move(m), channel_count, frame_count, options, client_data);
 		return std::move(m);
 	});
@@ -36,8 +36,8 @@ auto erase(model m, catch_buffer_id id) -> model {
 }
 
 inline
-auto erase(ez::nort_t thread, service::model* service, catch_buffer_id id) -> void {
-	service->model.update_publish(thread, [id](detail::model x){
+auto erase(ez::nort_t th, service::model* service, catch_buffer_id id) -> void {
+	service->model.update_publish(th, [id](detail::model x){
 		return erase(std::move(x), id);
 	});
 }
@@ -63,24 +63,24 @@ auto get_partition_size(ads::frame_count frame_count) -> ads::frame_count {
 
 [[nodiscard]] inline
 auto get_partition_size(const chain::model& chain) -> ads::frame_count {
-	return get_partition_size(chain.frame_count);
+	return get_partition_size(chain.actual_frame_count);
 }
 
 inline
-auto record(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, bool record_gate, auto write_fn) -> void {
+auto record(ez::audio_t th, service::model* service, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, bool record_gate, auto write_fn) -> void {
 	auto& audio    = cbuf.service->audio;
 	auto& critical = cbuf.service->critical;
 	const auto record_active = critical.record_active.load(std::memory_order_relaxed);
 	if (record_gate) {
 		const auto write_marker = critical.write_marker.load(std::memory_order_relaxed);
 		const auto write_marker_frame = ads::frame_idx{static_cast<int64_t>(write_marker)};
-		detail::scary_write_one_valid_sub_buffer_region(thread, service, chain.id, write_marker_frame, {kFloatsPerDSPVector}, write_fn);
+		detail::scary_write_one_valid_sub_buffer_region(th, service, chain.id, write_marker_frame, {kFloatsPerDSPVector}, write_fn);
 		if (!record_active) {
 			audio.record_start = write_marker_frame;
 			msg::to_ui::send(&service->critical.msgs_to_ui, msg::to_ui::catch_buffer::recording_started{cbuf.id, audio.record_start});
 			critical.record_active.store(true, std::memory_order_relaxed);
 		}
-		advance_write_marker(&critical, chain.frame_count, write_marker);
+		advance_write_marker(&critical, chain.actual_frame_count, write_marker);
 	}
 	else {
 		if (record_active) {
@@ -133,9 +133,9 @@ auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model
 		ml::loadAligned(out, chunk);
 		return frame_count;
 	};
-	const auto partition_size = get_partition_size(chain.frame_count);
+	const auto partition_size = get_partition_size(chain.actual_frame_count);
 	auto input_start_xform = [&, partition_size](ads::frame_idx fr) -> ads::frame_idx {
-		return get_partitioned_read_frame(cbuf, chain.frame_count, fr);
+		return get_partitioned_read_frame(cbuf, chain.actual_frame_count, fr);
 	};
 	static constexpr auto input_region_alignment  = processor::input_region_alignment{BUFFER_SIZE};
 	static constexpr auto output_region_alignment = processor::OUTPUT_REGION_ALIGNMENT_IGNORE;
@@ -147,30 +147,30 @@ auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model
 }
 
 [[nodiscard]] inline
-auto playback_mono(ez::audio_t thread, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
-	return ml::repeatRows<2>(playback_one_channel(thread, m, cbuf, chain, ads::channel_idx{0}, read_marker));
+auto playback_mono(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
+	return ml::repeatRows<2>(playback_one_channel(th, m, cbuf, chain, ads::channel_idx{0}, read_marker));
 }
 
 [[nodiscard]] inline
-auto playback_stereo(ez::audio_t thread, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
+auto playback_stereo(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::frame_idx read_marker) -> ml::DSPVectorArray<2> {
 	ml::DSPVectorArray<2> out;
 	for (auto ch = ads::channel_idx{0}; ch < chain.channel_count; ++ch) {
 		auto& row = out.row(static_cast<int>(ch.value));
-		row = playback_one_channel(thread, m, cbuf, chain, ch, read_marker);
+		row = playback_one_channel(th, m, cbuf, chain, ch, read_marker);
 	}
 	return out;
 }
 
 [[nodiscard]] inline
-auto playback(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const chain::model& chain) -> ml::DSPVectorArray<2> {
+auto playback(ez::audio_t th, service::model* service, const model& m, const catch_buffer::model& cbuf, const chain::model& chain) -> ml::DSPVectorArray<2> {
 	ml::DSPVectorArray<2> out;
 	auto& audio                = cbuf.service->audio;
 	auto& critical             = cbuf.service->critical;
 	if (!audio.playback_active) { return {}; }
 	auto read_marker = critical.playback_marker.load(std::memory_order_relaxed);
-	if (chain.channel_count.value == 1) { out = playback_mono  (thread, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
-	else                                { out = playback_stereo(thread, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
-	read_marker = advance_marker(chain.frame_count, read_marker);
+	if (chain.channel_count.value == 1) { out = playback_mono  (th, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
+	else                                { out = playback_stereo(th, m, cbuf, chain, {static_cast<int64_t>(read_marker)}); }
+	read_marker = advance_marker(chain.actual_frame_count, read_marker);
 	critical.playback_marker.store(read_marker, std::memory_order_relaxed);
 	if (read_marker >= cbuf.playback_region.end) {
 		audio.playback_active = false;
@@ -180,7 +180,7 @@ auto playback(ez::audio_t thread, service::model* service, const model& m, const
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+auto process(ez::audio_t th, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
 	auto& audio            = cbuf.service->audio;
 	const auto& chain      = m.chains.at(cbuf.chain);
 	const auto record_gate = disable_recording ? false : peak_gate::process(&audio.peak_gate, in, threshold);
@@ -189,12 +189,12 @@ auto process(ez::audio_t thread, service::model* service, const model& m, const 
 		ml::storeAligned(in * gain, buffer);
 		return ads::frame_count{kFloatsPerDSPVector};
 	};
-	record(thread, service, m, cbuf, chain, record_gate, write_fn);
-	return playback(thread, service, m, cbuf, chain);
+	record(th, service, m, cbuf, chain, record_gate, write_fn);
+	return playback(th, service, m, cbuf, chain);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+auto process(ez::audio_t th, service::model* service, const model& m, const catch_buffer::model& cbuf, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
 	auto& audio            = cbuf.service->audio;
 	const auto& chain      = m.chains.at(cbuf.chain);
 	const auto record_gate = disable_recording ? false : peak_gate::process(&audio.peak_gate, in, threshold);
@@ -204,8 +204,8 @@ auto process(ez::audio_t thread, service::model* service, const model& m, const 
 		ml::storeAligned(in.constRow(static_cast<int>(ch.value)) * gain, buffer);
 		return ads::frame_count{kFloatsPerDSPVector};
 	};
-	record(thread, service, m, cbuf, chain, record_gate, write_fn);
-	return playback(thread, service, m, cbuf, chain);
+	record(th, service, m, cbuf, chain, record_gate, write_fn);
+	return playback(th, service, m, cbuf, chain);
 }
 
 [[nodiscard]] inline
@@ -219,37 +219,57 @@ auto get_channel_count(const model& m, catch_buffer_id id) -> ads::channel_count
 }
 
 [[nodiscard]] inline
-auto get_channel_count(ez::ui_t thread, service::model* service, catch_buffer_id id) -> ads::channel_count {
-	return get_channel_count(service->model.read(thread), id);
+auto get_channel_count(ez::ui_t th, service::model* service, catch_buffer_id id) -> ads::channel_count {
+	return get_channel_count(service->model.read(th), id);
 }
 
 [[nodiscard]] inline
-auto get_frame_count(const model& m, const catch_buffer::model& cbuf) -> ads::frame_count {
-	return get_partition_size(m.chains.at(cbuf.chain).frame_count);
+auto get_actual_frame_count(const model& m, const catch_buffer::model& cbuf) -> ads::frame_count {
+	return get_partition_size(m.chains.at(cbuf.chain).actual_frame_count);
 }
 
 [[nodiscard]] inline
-auto get_frame_count(const model& m, catch_buffer_id id) -> ads::frame_count {
-	return get_frame_count(m, m.catch_buffers.at(id));
+auto get_actual_frame_count(const model& m, catch_buffer_id id) -> ads::frame_count {
+	return get_actual_frame_count(m, m.catch_buffers.at(id));
 }
 
 [[nodiscard]] inline
-auto get_frame_count(ez::ui_t thread, service::model* service, catch_buffer_id id) -> ads::frame_count {
-	return get_frame_count(service->model.read(thread), id);
+auto get_actual_frame_count(ez::ui_t th, service::model* service, catch_buffer_id id) -> ads::frame_count {
+	return get_actual_frame_count(service->model.read(th), id);
+}
+
+[[nodiscard]] inline
+auto get_actual_frame_count(ads::frame_count requested_frs) -> ads::frame_count {
+	return {buffer_count(requested_frs) * BUFFER_SIZE};
+}
+
+[[nodiscard]] inline
+auto get_requested_frame_count(const model& m, const catch_buffer::model& cbuf) -> ads::frame_count {
+	return get_partition_size(m.chains.at(cbuf.chain).requested_frame_count);
+}
+
+[[nodiscard]] inline
+auto get_requested_frame_count(const model& m, catch_buffer_id id) -> ads::frame_count {
+	return get_requested_frame_count(m, m.catch_buffers.at(id));
+}
+
+[[nodiscard]] inline
+auto get_requested_frame_count(ez::ui_t th, service::model* service, catch_buffer_id id) -> ads::frame_count {
+	return get_requested_frame_count(service->model.read(th), id);
 }
 
 [[nodiscard]] inline
 auto get_playback_marker(const model& m, const catch_buffer::model& cbuf) -> ads::frame_idx {
 	const auto& chain = m.chains.at(cbuf.chain);
 	const auto marker = cbuf.service->critical.playback_marker.load(std::memory_order_relaxed);
-	return {static_cast<int64_t>(marker % get_partition_size(chain.frame_count).value)};
+	return {static_cast<int64_t>(marker % get_partition_size(chain.actual_frame_count).value)};
 }
 
 [[nodiscard]] inline
 auto get_write_marker(const model& m, const catch_buffer::model& cbuf) -> ads::frame_idx {
 	const auto& chain = m.chains.at(cbuf.chain);
 	const auto marker = cbuf.service->critical.write_marker.load(std::memory_order_relaxed);
-	return {static_cast<int64_t>(marker % get_partition_size(chain.frame_count).value)};
+	return {static_cast<int64_t>(marker % get_partition_size(chain.actual_frame_count).value)};
 }
 
 [[nodiscard]] inline
@@ -278,36 +298,36 @@ auto is_record_active(const model& m, catch_buffer_id id) -> bool {
 }
 
 [[nodiscard]] inline
-auto is_playback_active(ez::ui_t thread, const model& m, catch_buffer_id id) -> bool {
-	return is_playback_active(thread, m.catch_buffers.at(id));
+auto is_playback_active(ez::ui_t th, const model& m, catch_buffer_id id) -> bool {
+	return is_playback_active(th, m.catch_buffers.at(id));
 }
 
 [[nodiscard]] inline
-auto get_playback_marker(ez::ui_t thread, service::model* service, catch_buffer_id id) -> ads::frame_idx {
-	return detail::get_playback_marker(service->model.read(thread), id);
+auto get_playback_marker(ez::ui_t th, service::model* service, catch_buffer_id id) -> ads::frame_idx {
+	return detail::get_playback_marker(service->model.read(th), id);
 }
 
 [[nodiscard]] inline
-auto get_write_marker(ez::ui_t thread, service::model* service, catch_buffer_id id) -> ads::frame_idx {
-	return detail::get_write_marker(service->model.read(thread), id);
+auto get_write_marker(ez::ui_t th, service::model* service, catch_buffer_id id) -> ads::frame_idx {
+	return detail::get_write_marker(service->model.read(th), id);
 }
 
 [[nodiscard]] inline
-auto is_record_active(ez::ui_t thread, service::model* service, catch_buffer_id id) -> bool {
-	return detail::is_record_active(service->model.read(thread), id);
+auto is_record_active(ez::ui_t th, service::model* service, catch_buffer_id id) -> bool {
+	return detail::is_record_active(service->model.read(th), id);
 }
 
 [[nodiscard]] inline
-auto is_playback_active(ez::ui_t thread, service::model* service, catch_buffer_id id) -> bool {
-	return detail::is_playback_active(thread, service->model.read(thread), id);
+auto is_playback_active(ez::ui_t th, service::model* service, catch_buffer_id id) -> bool {
+	return detail::is_playback_active(th, service->model.read(th), id);
 }
 
 [[nodiscard]] inline
 auto read_mipmap(const model& m, const catch_buffer::model& cbuf, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
 	const auto& chain = m.chains.at(cbuf.chain);
-	if (fr < 0)                                      { return {}; }
-	if (fr >= get_partition_size(chain.frame_count)) { return {}; }
-	fr = get_partitioned_read_frame(cbuf, chain.frame_count, fr);
+	if (fr < 0)                                             { return {}; }
+	if (fr >= get_partition_size(chain.actual_frame_count)) { return {}; }
+	fr = get_partitioned_read_frame(cbuf, chain.actual_frame_count, fr);
 	return detail::read_mipmap(m, cbuf.chain, bin_size, ch, fr);
 }
 
@@ -317,8 +337,8 @@ auto read_mipmap(const model& m, catch_buffer_id id, double bin_size, ads::chann
 }
 
 [[nodiscard]] inline
-auto read_mipmap(ez::ui_t thread, service::model* service, catch_buffer_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
-	return read_mipmap(service->model.read(thread), id, bin_size, ch, fr);
+auto read_mipmap(ez::ui_t th, service::model* service, catch_buffer_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
+	return read_mipmap(service->model.read(th), id, bin_size, ch, fr);
 }
 
 template <typename ReadFn>
@@ -335,9 +355,9 @@ auto read(const model& m, const catch_buffer::model& cbuf, const chain::model& c
 	auto output = [&](const float* chunk, ads::frame_idx start, ads::frame_count frame_count) -> ads::frame_count {
 		return read_fn(chunk, start, frame_count);
 	};
-	const auto partition_size = get_partition_size(chain.frame_count);
+	const auto partition_size = get_partition_size(chain.actual_frame_count);
 	auto input_start_xform = [&, partition_size](ads::frame_idx fr) -> ads::frame_idx {
-		return get_partitioned_read_frame(cbuf, chain.frame_count, fr);
+		return get_partitioned_read_frame(cbuf, chain.actual_frame_count, fr);
 	};
 	static constexpr auto input_region_alignment  = processor::input_region_alignment{BUFFER_SIZE};
 	static constexpr auto output_region_alignment = processor::OUTPUT_REGION_ALIGNMENT_IGNORE;
@@ -394,20 +414,20 @@ auto read(const model& m, catch_buffer_id id, ads::frame_idx start, ads::frame_c
 template <typename ReadFn>
 	requires ads::concepts::is_single_channel_read_fn<float, ReadFn>
 [[nodiscard]]
-auto read(ez::nort_t thread, service::model* service, catch_buffer_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
-	return read(service->model.read(thread), id, ch, start, frame_count, read_fn);
+auto read(ez::nort_t th, service::model* service, catch_buffer_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
+	return read(service->model.read(th), id, ch, start, frame_count, read_fn);
 }
 
 template <typename ReadFn>
 	requires ads::concepts::is_multi_channel_read_fn<float, ReadFn>
 [[nodiscard]]
-auto read(ez::nort_t thread, service::model* service, catch_buffer_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
-	return read(service->model.read(thread), id, start, frame_count, read_fn);
+auto read(ez::nort_t th, service::model* service, catch_buffer_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
+	return read(service->model.read(th), id, start, frame_count, read_fn);
 }
 
 inline
-auto set_mipmaps_enabled(ez::nort_t thread, service::model* service, catch_buffer_id id, bool enabled) -> void {
-	service->model.update_publish(thread, [id, enabled](detail::model x){
+auto set_mipmaps_enabled(ez::nort_t th, service::model* service, catch_buffer_id id, bool enabled) -> void {
+	service->model.update_publish(th, [id, enabled](detail::model x){
 		const auto& cbuf = x.catch_buffers.at(id);
 		return set_mipmaps_enabled(std::move(x), cbuf.chain, enabled);
 	});
@@ -432,23 +452,23 @@ auto playback_start(ez::audio_t, const model& m, catch_buffer_id id) -> void {
 }
 
 inline
-auto playback_start(ez::audio_t thread, service::model* service, catch_buffer_id id) -> void {
-	playback_start(thread, *service->model.read(thread), id);
+auto playback_start(ez::audio_t th, service::model* service, catch_buffer_id id) -> void {
+	playback_start(th, *service->model.read(th), id);
 }
 
 inline
-auto playback_start(ez::audio_t thread, catch_buffer_id id) -> void {
-	playback_start(thread, &detail::service_, id);
+auto playback_start(ez::audio_t th, catch_buffer_id id) -> void {
+	playback_start(th, &detail::service_, id);
 }
 
 inline
-auto playback_start(ez::ui_t thread, service::model* service, catch_buffer_id id, ads::region region) -> void {
-	const auto model = service->model.update_publish(thread, [id, region](detail::model x){
+auto playback_start(ez::ui_t th, service::model* service, catch_buffer_id id, ads::region region) -> void {
+	const auto model = service->model.update_publish(th, [id, region](detail::model x){
 		return set_playback_region(std::move(x), id, region);
 	});
 	const auto& cbuf = model.catch_buffers.at(id);
 	cbuf.service->ui.playback_active = true;
-	// This is only written at this point so that the UI thread can immediately
+	// This is only written at this point so that the UI th can immediately
 	// see the value. It's not required from the audio thread's perspective.
 	cbuf.service->critical.playback_marker.store(region.beg.value, std::memory_order_relaxed);
 	// Tell the audio thread to start playback.
@@ -463,31 +483,31 @@ auto playback_stop(ez::audio_t, const model& m, catch_buffer_id id) -> void {
 }
 
 inline
-auto playback_stop(ez::ui_t thread, service::model* service, catch_buffer_id id) -> void {
-	const auto model = service->model.read(thread);
+auto playback_stop(ez::ui_t th, service::model* service, catch_buffer_id id) -> void {
+	const auto model = service->model.read(th);
 	const auto& cbuf = model.catch_buffers.at(id);
 	cbuf.service->ui.playback_active = false;
 	service->critical.msgs_to_audio.v.enqueue(msg::to_audio::catch_buffer::playback_stop{id});
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, m, m.catch_buffers.at(id), in, threshold, gain, disable_recording);
+auto process(ez::audio_t th, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(th, service, m, m.catch_buffers.at(id), in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, m, m.catch_buffers.at(id), in, threshold, gain, disable_recording);
+auto process(ez::audio_t th, service::model* service, const model& m, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(th, service, m, m.catch_buffers.at(id), in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, *service->model.read(thread), id, in, threshold, gain, disable_recording);
+auto process(ez::audio_t th, service::model* service, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(th, service, *service->model.read(th), id, in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, service::model* service, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, service, *service->model.read(thread), id, in, threshold, gain, disable_recording);
+auto process(ez::audio_t th, service::model* service, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording) -> ml::DSPVectorArray<2> {
+	return detail::process(th, service, *service->model.read(th), id, in, threshold, gain, disable_recording);
 }
 
 template <uint64_t DestChs, uint64_t DestFrs> inline
@@ -511,15 +531,15 @@ auto copy(const model& m, catch_buffer_id id, ads::frame_idx start, ads::data<fl
 }
 
 template <uint64_t DestChs, uint64_t DestFrs> inline
-auto copy(ez::nort_t thread, service::model* service, catch_buffer_id id, ads::frame_idx start, ads::data<float, DestChs, DestFrs>* dest, ads::frame_idx dest_start, ads::frame_count frame_count) -> ads::frame_count {
-	return detail::copy(service->model.read(thread), id, start, dest, dest_start, frame_count);
+auto copy(ez::nort_t th, service::model* service, catch_buffer_id id, ads::frame_idx start, ads::data<float, DestChs, DestFrs>* dest, ads::frame_idx dest_start, ads::frame_count frame_count) -> ads::frame_count {
+	return detail::copy(service->model.read(th), id, start, dest, dest_start, frame_count);
 }
 
 [[nodiscard]] inline
-auto reconfigure(ez::nort_t thread, model&& m, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> model {
+auto reconfigure(ez::nort_t th, model&& m, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> model {
 	auto cbuf         = m.catch_buffers.at(id);
 	const auto& chain = m.chains.at(cbuf.chain);
-	std::tie(m, cbuf.chain) = make_chain(thread, std::move(m), chc, frc * 2, cbuf.chain_options, chain.client_data);
+	std::tie(m, cbuf.chain) = make_chain(th, std::move(m), chc, frc * 2, cbuf.chain_options, chain.client_data);
 	m = erase(std::move(m), chain.id);
 	m.catch_buffers = m.catch_buffers.insert(cbuf);
 	cbuf.service->critical.playback_marker.store(0, std::memory_order_relaxed);
@@ -528,15 +548,15 @@ auto reconfigure(ez::nort_t thread, model&& m, catch_buffer_id id, ads::channel_
 }
 
 inline
-auto reconfigure(ez::nort_t thread, service::model* service, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> void {
-	service->model.update_publish(thread, [id, chc, frc](detail::model x){
+auto reconfigure(ez::nort_t th, service::model* service, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> void {
+	service->model.update_publish(th, [id, chc, frc](detail::model x){
 		return reconfigure(ez::nort, std::move(x), id, chc, frc);
 	});
 }
 
 inline
-auto reconfigure(ez::nort_t thread, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> void {
-	detail::reconfigure(thread, &detail::service_, id, chc, frc);
+auto reconfigure(ez::nort_t th, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> void {
+	detail::reconfigure(th, &detail::service_, id, chc, frc);
 }
 
 } // adrian::detail
@@ -544,95 +564,105 @@ auto reconfigure(ez::nort_t thread, catch_buffer_id id, ads::channel_count chc, 
 namespace adrian {
 
 template <uint64_t DestChs, uint64_t DestFrs>
-auto copy(ez::nort_t thread, catch_buffer_id id, ads::frame_idx start, ads::data<float, DestChs, DestFrs>* dest, ads::frame_idx dest_start, ads::frame_count frame_count) -> ads::frame_count {
-	return detail::copy(thread, &detail::service_, id, start, dest, dest_start, frame_count);
+auto copy(ez::nort_t th, catch_buffer_id id, ads::frame_idx start, ads::data<float, DestChs, DestFrs>* dest, ads::frame_idx dest_start, ads::frame_count frame_count) -> ads::frame_count {
+	return detail::copy(th, &detail::service_, id, start, dest, dest_start, frame_count);
 }
 
 [[nodiscard]] inline
-auto get_channel_count(ez::ui_t thread, catch_buffer_id id) -> ads::channel_count {
-	return detail::get_channel_count(thread, &detail::service_, id);
+auto get_channel_count(ez::ui_t th, catch_buffer_id id) -> ads::channel_count {
+	return detail::get_channel_count(th, &detail::service_, id);
 }
 
 [[nodiscard]] inline
-auto get_frame_count(ez::ui_t thread, catch_buffer_id id) -> ads::frame_count {
-	return detail::get_frame_count(thread, &detail::service_, id);
+auto get_actual_frame_count(ez::ui_t th, catch_buffer_id id) -> ads::frame_count {
+	return detail::get_actual_frame_count(th, &detail::service_, id);
 }
 
 [[nodiscard]] inline
-auto get_playback_marker(ez::ui_t thread, catch_buffer_id id) -> ads::frame_idx {
-	return detail::get_playback_marker(thread, &detail::service_, id);
+auto get_actual_frame_count(ads::frame_count requested_frs) -> ads::frame_count {
+	return detail::get_actual_frame_count(requested_frs);
 }
 
 [[nodiscard]] inline
-auto get_write_marker(ez::ui_t thread, catch_buffer_id id) -> ads::frame_idx {
-	return detail::get_write_marker(thread, &detail::service_, id);
+auto get_requested_frame_count(ez::ui_t th, catch_buffer_id id) -> ads::frame_count {
+	return detail::get_requested_frame_count(th, &detail::service_, id);
 }
 
 [[nodiscard]] inline
-auto is_record_active(ez::ui_t thread, catch_buffer_id id) -> bool {
-	return detail::is_record_active(thread, &detail::service_, id);
+auto get_playback_marker(ez::ui_t th, catch_buffer_id id) -> ads::frame_idx {
+	return detail::get_playback_marker(th, &detail::service_, id);
 }
 
 [[nodiscard]] inline
-auto is_playback_active(ez::ui_t thread, catch_buffer_id id) -> bool {
-	return detail::is_playback_active(thread, &detail::service_, id);
+auto get_write_marker(ez::ui_t th, catch_buffer_id id) -> ads::frame_idx {
+	return detail::get_write_marker(th, &detail::service_, id);
 }
 
 [[nodiscard]] inline
-auto make_catch_buffer(ez::nort_t thread, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> catch_buffer_id {
-	return detail::make_catch_buffer(thread, &detail::service_, channel_count, frame_count, options, client_data);
+auto is_record_active(ez::ui_t th, catch_buffer_id id) -> bool {
+	return detail::is_record_active(th, &detail::service_, id);
+}
+
+[[nodiscard]] inline
+auto is_playback_active(ez::ui_t th, catch_buffer_id id) -> bool {
+	return detail::is_playback_active(th, &detail::service_, id);
+}
+
+[[nodiscard]] inline
+auto make_catch_buffer(ez::nort_t th, ads::channel_count channel_count, ads::frame_count frame_count, chain_options options, std::any client_data) -> catch_buffer_id {
+	return detail::make_catch_buffer(th, &detail::service_, channel_count, frame_count, options, client_data);
 }
 
 inline
-auto playback_start(ez::ui_t thread, catch_buffer_id id, ads::region region) -> void {
-	return detail::playback_start(thread, &detail::service_, id, region);
+auto playback_start(ez::ui_t th, catch_buffer_id id, ads::region region) -> void {
+	return detail::playback_start(th, &detail::service_, id, region);
 }
 
 inline
-auto playback_stop(ez::ui_t thread, catch_buffer_id id) -> void {
-	return detail::playback_stop(thread, &detail::service_, id);
+auto playback_stop(ez::ui_t th, catch_buffer_id id) -> void {
+	return detail::playback_stop(th, &detail::service_, id);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording = false) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, &detail::service_, id, in, threshold, gain, disable_recording);
+auto process(ez::audio_t th, catch_buffer_id id, const ml::DSPVector& in, float threshold, float gain, bool disable_recording = false) -> ml::DSPVectorArray<2> {
+	return detail::process(th, &detail::service_, id, in, threshold, gain, disable_recording);
 }
 
 [[nodiscard]] inline
-auto process(ez::audio_t thread, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording = false) -> ml::DSPVectorArray<2> {
-	return detail::process(thread, &detail::service_, id, in, threshold, gain, disable_recording);
+auto process(ez::audio_t th, catch_buffer_id id, const ml::DSPVectorArray<2>& in, float threshold, float gain, bool disable_recording = false) -> ml::DSPVectorArray<2> {
+	return detail::process(th, &detail::service_, id, in, threshold, gain, disable_recording);
 }
 
 template <typename ReadFn>
 	requires ads::concepts::is_multi_channel_read_fn<float, ReadFn>
-[[nodiscard]] auto read(ez::nort_t thread, catch_buffer_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
-	return detail::read(thread, &detail::service_, id, start, read_fn);
+[[nodiscard]] auto read(ez::nort_t th, catch_buffer_id id, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
+	return detail::read(th, &detail::service_, id, start, read_fn);
 }
 
 template <typename ReadFn>
 	requires ads::concepts::is_single_channel_read_fn<float, ReadFn>
-[[nodiscard]] auto read(ez::nort_t thread, catch_buffer_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
-	return detail::read(thread, &detail::service_, id, ch, start, frame_count, read_fn);
+[[nodiscard]] auto read(ez::nort_t th, catch_buffer_id id, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
+	return detail::read(th, &detail::service_, id, ch, start, frame_count, read_fn);
 }
 
 [[nodiscard]] inline
-auto read_mipmap(ez::ui_t thread, catch_buffer_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
-	return detail::read_mipmap(thread, &detail::service_, id, bin_size, ch, fr);
+auto read_mipmap(ez::ui_t th, catch_buffer_id id, double bin_size, ads::channel_idx ch, double fr) -> ads::mipmap_minmax<uint8_t> {
+	return detail::read_mipmap(th, &detail::service_, id, bin_size, ch, fr);
 }
 
 inline
-auto erase(ez::nort_t thread, catch_buffer_id id) -> void {
-	detail::erase(thread, &detail::service_, id);
+auto erase(ez::nort_t th, catch_buffer_id id) -> void {
+	detail::erase(th, &detail::service_, id);
 }
 
 inline
-auto reconfigure(ez::nort_t thread, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> void {
-	return detail::reconfigure(thread, &detail::service_, id, chc, frc);
+auto reconfigure(ez::nort_t th, catch_buffer_id id, ads::channel_count chc, ads::frame_count frc) -> void {
+	return detail::reconfigure(th, &detail::service_, id, chc, frc);
 }
 
 inline
-auto set_mipmaps_enabled(ez::nort_t thread, catch_buffer_id id, bool enabled) -> void {
-	return detail::set_mipmaps_enabled(thread, &detail::service_, id, enabled);
+auto set_mipmaps_enabled(ez::nort_t th, catch_buffer_id id, bool enabled) -> void {
+	return detail::set_mipmaps_enabled(th, &detail::service_, id, enabled);
 }
 
 // RAII catch buffer wrapper
@@ -654,32 +684,35 @@ struct catch_buffer {
 		rhs.id_ = {};
 		return *this;
 	}
-	auto playback_start(ez::ui_t thread, ads::region region) -> void                  { adrian::playback_start(thread, id_, region); }
-	auto playback_stop(ez::ui_t thread) -> void                                       { adrian::playback_stop(thread, id_); }
-	auto reconfigure(ez::nort_t thread, ads::channel_count chc, ads::frame_count frc) { adrian::reconfigure(thread, id_, chc, frc); }
-	auto set_mipmaps_enabled(ez::nort_t thread, bool enabled) -> void                 { adrian::set_mipmaps_enabled(thread, id_, enabled); }
-	[[nodiscard]] auto get_channel_count(ez::ui_t thread) const -> ads::channel_count { return adrian::get_channel_count(thread, id_); }
-	[[nodiscard]] auto get_frame_count(ez::ui_t thread) const -> ads::frame_count     { return adrian::get_frame_count(thread, id_); }
-	[[nodiscard]] auto get_playback_marker(ez::ui_t thread) const -> ads::frame_idx   { return adrian::get_playback_marker(thread, id_); }
-	[[nodiscard]] auto get_write_marker(ez::ui_t thread) const -> ads::frame_idx      { return adrian::get_write_marker(thread, id_); }
-	[[nodiscard]] auto id() const -> catch_buffer_id                                  { return id_; }
-	[[nodiscard]] auto is_record_active(ez::ui_t thread) const -> bool                { return adrian::is_record_active(thread, id_); }
-	[[nodiscard]] auto is_playback_active(ez::ui_t thread) const -> bool              { return adrian::is_playback_active(thread, id_); }
+	// If `frs` frames are requested, what would the actual frame count be?
+	[[nodiscard]] static auto get_actual_frame_count(ads::frame_count frs) -> ads::frame_count { return adrian::get_actual_frame_count(frs); }
+	auto playback_start(ez::ui_t th, ads::region region) -> void                        { adrian::playback_start(th, id_, region); }
+	auto playback_stop(ez::ui_t th) -> void                                             { adrian::playback_stop(th, id_); }
+	auto reconfigure(ez::nort_t th, ads::channel_count chc, ads::frame_count frc)       { adrian::reconfigure(th, id_, chc, frc); }
+	auto set_mipmaps_enabled(ez::nort_t th, bool enabled) -> void                       { adrian::set_mipmaps_enabled(th, id_, enabled); }
+	[[nodiscard]] auto get_channel_count(ez::ui_t th) const -> ads::channel_count       { return adrian::get_channel_count(th, id_); }
+	[[nodiscard]] auto get_actual_frame_count(ez::ui_t th) const -> ads::frame_count    { return adrian::get_actual_frame_count(th, id_); }
+	[[nodiscard]] auto get_requested_frame_count(ez::ui_t th) const -> ads::frame_count { return adrian::get_requested_frame_count(th, id_); }
+	[[nodiscard]] auto get_playback_marker(ez::ui_t th) const -> ads::frame_idx         { return adrian::get_playback_marker(th, id_); }
+	[[nodiscard]] auto get_write_marker(ez::ui_t th) const -> ads::frame_idx            { return adrian::get_write_marker(th, id_); }
+	[[nodiscard]] auto id() const -> catch_buffer_id                                    { return id_; }
+	[[nodiscard]] auto is_record_active(ez::ui_t th) const -> bool                      { return adrian::is_record_active(th, id_); }
+	[[nodiscard]] auto is_playback_active(ez::ui_t th) const -> bool                    { return adrian::is_playback_active(th, id_); }
 	[[nodiscard]]
-	auto read_mipmap(ez::ui_t thread, double bin_size, ads::channel_idx ch, double fr) const -> ads::mipmap_minmax<uint8_t> {
-		return adrian::read_mipmap(thread, id_, bin_size, ch, fr);
+	auto read_mipmap(ez::ui_t th, double bin_size, ads::channel_idx ch, double fr) const -> ads::mipmap_minmax<uint8_t> {
+		return adrian::read_mipmap(th, id_, bin_size, ch, fr);
 	}
 	template <uint64_t DestChs, uint64_t DestFrs>
-	auto copy(ez::nort_t thread, ads::frame_idx start, ads::data<float, DestChs, DestFrs>* dest, ads::frame_idx dest_start, ads::frame_count frame_count) -> ads::frame_count {
-		return adrian::copy(thread, id_, start, dest, dest_start, frame_count);
+	auto copy(ez::nort_t th, ads::frame_idx start, ads::data<float, DestChs, DestFrs>* dest, ads::frame_idx dest_start, ads::frame_count frame_count) -> ads::frame_count {
+		return adrian::copy(th, id_, start, dest, dest_start, frame_count);
 	}
 	template <typename ReadFn> requires ads::concepts::is_read_fn<float, ReadFn>
-	auto read(ez::nort_t thread, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
-		return adrian::read(thread, id_, start, frame_count, read_fn);
+	auto read(ez::nort_t th, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
+		return adrian::read(th, id_, start, frame_count, read_fn);
 	}
 	template <typename ReadFn> requires ads::concepts::is_single_channel_read_fn<float, ReadFn>
-	auto read(ez::nort_t thread, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
-		return adrian::read(thread, id_, ch, start, frame_count, read_fn);
+	auto read(ez::nort_t th, ads::channel_idx ch, ads::frame_idx start, ads::frame_count frame_count, ReadFn read_fn) -> ads::frame_count {
+		return adrian::read(th, id_, ch, start, frame_count, read_fn);
 	}
 private:
 	auto erase() -> void {

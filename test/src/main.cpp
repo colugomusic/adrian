@@ -1,4 +1,5 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#define ADRIAN_OVERRIDE_BUFFER_SIZE 64
 #include "adrian.hpp"
 #include "doctest.h"
 #include <vector>

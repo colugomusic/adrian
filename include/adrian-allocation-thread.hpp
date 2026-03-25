@@ -27,7 +27,7 @@ auto cancel_loading(model x, const loading_chain& lc) -> model {
 inline
 auto do_one_allocation(model x, loading_chain lc, const chain::model& chain) -> model {
 	assert (lc.channel_count == chain.channel_count);
-	const auto required_buffer_count = buffer_count(chain.frame_count);
+	const auto required_buffer_count = buffer_count(chain.requested_frame_count);
 	buffer_idx idx;
 	std::tie(x, idx) = find_unused_or_create_new_buffer(ez::nort, std::move(x), chain.channel_count);
 	x = set_as_in_use(std::move(x), chain.channel_count, idx);

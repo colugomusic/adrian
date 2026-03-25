@@ -30,10 +30,15 @@ struct chain_options {
 
 namespace adrian::detail {
 
-static constexpr uint64_t BUFFER_SIZE = 1 << 14;
+#if defined(ADRIAN_OVERRIDE_BUFFER_SIZE)
+    static constexpr uint64_t BUFFER_SIZE = ADRIAN_OVERRIDE_BUFFER_SIZE;
+#else
+    static constexpr uint64_t BUFFER_SIZE = 1 << 14;
+#endif
 
 [[nodiscard]] constexpr auto is_power_of_two(uint64_t x) -> bool { return (x & (x - 1)) == 0; }
 
+static_assert (BUFFER_SIZE > 0);
 static_assert (is_power_of_two(BUFFER_SIZE));
 
 struct buffer_idx { ADRIAN_DEFAULT_EQUALITY(buffer_idx); int32_t value = -1; explicit operator bool() const { return value >= 0; } };
@@ -104,18 +109,20 @@ struct model {
 	chain::flags flags;
 	float load_progress = 0.0f;
 	ads::channel_count channel_count;
-	ads::frame_count frame_count;
+	ads::frame_count actual_frame_count;
+	ads::frame_count requested_frame_count;
 	std::optional<immer::vector<buffer_idx>> buffers;
 	std::any client_data;
 };
 
 inline
 auto operator==(const model& a, const model& b) -> bool {
-	return a.flags         == b.flags &&
-		   a.load_progress == b.load_progress &&
-		   a.channel_count == b.channel_count &&
-		   a.frame_count   == b.frame_count &&
-		   a.buffers       == b.buffers;
+	return a.flags                 == b.flags &&
+		   a.load_progress         == b.load_progress &&
+		   a.channel_count         == b.channel_count &&
+		   a.actual_frame_count    == b.actual_frame_count &&
+		   a.requested_frame_count == b.requested_frame_count &&
+		   a.buffers               == b.buffers;
 }
 
 } // chain
