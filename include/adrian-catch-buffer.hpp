@@ -147,8 +147,9 @@ auto playback_one_channel(ez::audio_t, const model& m, const catch_buffer::model
 [[nodiscard]] inline
 auto playback_one_channel(ez::audio_t th, const model& m, const catch_buffer::model& cbuf, const chain::model& chain, ads::channel_idx ch, ads::frame_idx start) -> ml::DSPVector {
 	auto out                  = ml::DSPVector{};
-	const auto end            = start + kFloatsPerDSPVector;
 	const auto partition_size = get_partition_size(chain.actual_frame_count);
+	start.value %= partition_size.value;
+	const auto end = start + kFloatsPerDSPVector;
 	// Are we going to overflow the end of the partition?
 	// In that case we need to split the playback up into
 	// two parts to do the wraparound. Otherwise we would
